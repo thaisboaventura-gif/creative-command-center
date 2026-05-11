@@ -15,6 +15,17 @@ interface TaskItem {
   createdAt: string;
 }
 
+interface IncomingItem {
+  id: string;
+  key: string;
+  title: string;
+  status: string;
+  assignee: string;
+  dueDate: string | null;
+  estimatedHours: number;
+  createdAt: string;
+}
+
 interface MemberItem {
   name: string;
   avatar: string;
@@ -158,13 +169,17 @@ const AREA_COLORS: Record<string, string> = { design: "#7c3aed", copy: "#2563eb"
 
 export default function Dashboard() {
   const [team, setTeam] = useState<MemberItem[]>([]);
+  const [incoming, setIncoming] = useState<IncomingItem[]>([]);
   const [src, setSrc] = useState<"loading" | "ok" | "err">("loading");
   const [page, setPage] = useState(0);
 
   useEffect(() => {
     fetch("/api/jira")
       .then((r) => r.json())
-      .then((d) => { if (d.team?.length) { setTeam(d.team); setSrc("ok"); } else setSrc("err"); })
+      .then((d) => {
+        if (d.team?.length) { setTeam(d.team); setSrc("ok"); } else setSrc("err");
+        if (d.newDemands?.length) setIncoming(d.newDemands);
+      })
       .catch(() => setSrc("err"));
   }, []);
 
@@ -344,6 +359,9 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Incoming panel */}
+      {incoming.length > 0 && <IncomingPanel items={incoming} />}
+
       {/* Legend */}
       <div style={{ marginTop: 14, display: "flex", gap: 14, fontSize: 10, color: "#9ca3af", flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
@@ -383,6 +401,110 @@ function Btn({ children, onClick }: { children: React.ReactNode; onClick: () => 
     <button onClick={onClick} style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "#374151" }}>
       {children}
     </button>
+  );
+}
+
+function IncomingPanel({ items }: { items: IncomingItem[] }) {
+  const now = new Date();
+  const weekAgo = new Date(now);
+  weekAgo.setDate(now.getDate() - 7);
+
+  const thisWeek = items.filter((i) => new Date(i.createdAt) >= weekAgo);
+  const assigned = thisWeek.filter((i) => i.assignee);
+  const unassigned = thisWeek.filter((i) => !i.assignee);
+
+  const statusLabel: Record<string, { label: string; color: string; bg: string }> = {
+    to_do:       { label: "A fazer",     color: "#6b7280", bg: "#f3f4f6" },
+    in_progress: { label: "Em andamento", color: "#2563eb", bg: "#eff6ff" },
+    in_review:   { label: "Em revisão",  color: "#d97706", bg: "#fffbeb" },
+    done:        { label: "Concluído",   color: "#16a34a", bg: "#f0fdf4" },
+  };
+
+  function relativeDay(dateStr: string): string {
+    const d = new Date(dateStr);
+    const diff = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (diff === 0) return "hoje";
+    if (diff === 1) return "ontem";
+    return `há ${diff} dias`;
+  }
+
+  return (
+    <div style={{ marginTop: 24, background: "white", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#111" }}>Entrantes essa semana</span>
+          <span style={{ background: "#ede9fe", color: "#7c3aed", borderRadius: 99, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
+            {thisWeek.length}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#6b7280" }}>
+          <span>✅ {assigned.length} atribuídas</span>
+          <span>⏳ {unassigned.length} sem responsável</span>
+        </div>
+      </div>
+
+      {/* List */}
+      {thisWeek.length === 0 ? (
+        <div style={{ padding: 24, textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
+          Nenhuma task nova essa semana.
+        </div>
+      ) : (
+        <div>
+          {thisWeek.map((item, idx) => {
+            const st = statusLabel[item.status] || statusLabel.to_do;
+            return (
+              <div
+                key={item.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "9px 16px",
+                  borderBottom: idx < thisWeek.length - 1 ? "1px solid #f9fafb" : "none",
+                  flexWrap: "wrap",
+                }}
+              >
+                {/* Key */}
+                <a
+                  href={`${JIRA}/${item.key}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textDecoration: "none", minWidth: 72, flexShrink: 0 }}
+                >
+                  {item.key}
+                </a>
+
+                {/* Title */}
+                <span style={{ fontSize: 12, color: "#111", flex: 1, minWidth: 120 }}>
+                  {item.title}
+                </span>
+
+                {/* Status badge */}
+                <span style={{ fontSize: 10, fontWeight: 600, color: st.color, background: st.bg, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>
+                  {st.label}
+                </span>
+
+                {/* Assignee or unassigned */}
+                <span style={{ fontSize: 11, color: item.assignee ? "#374151" : "#d1d5db", minWidth: 80, flexShrink: 0 }}>
+                  {item.assignee ? item.assignee.split(" ")[0] : "— sem dono"}
+                </span>
+
+                {/* Date */}
+                <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>
+                  {relativeDay(item.createdAt)}
+                </span>
+
+                {/* Hours estimate */}
+                <span style={{ fontSize: 10, color: "#c4b5fd", flexShrink: 0 }}>
+                  {fmtH(item.estimatedHours)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
