@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { estimateHours } from "@/lib/estimate";
+import { sendSlackAlert } from "@/lib/slack";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -280,6 +281,37 @@ Se o briefing pedir quantidade POR formato (ex: "3 paisagem + 3 quadrada + 3 ret
 e subtasks=[]. No campo "comment" escreva EXATAMENTE:
 "O briefing pede [total] peças no total ([N] por formato). Podemos criar [base count] artes base e desdobrar nos [X] formatos? Ou cada formato precisa de composição visual diferente?"
 
+REGRA — VALIDAÇÃO DE COPY (aplicar quando o job envolver copy/texto):
+Se o briefing incluir copy, verifique ANTES de aprovar:
+
+1. MENSAGEM: Cada peça tem uma mensagem clara e específica?
+   Se mencionar "conceitos", "ângulos" ou "temas" sem descrever o que cada um diz:
+   → needs_clarification=true
+   → comment: "O briefing menciona X conceitos mas não descreve nenhum. Qual é a mensagem principal de cada um? Uma frase por conceito."
+
+2. DADOS: Se mencionar números ou cases sem dizer em qual peça usar:
+   → needs_clarification=true
+   → comment: "Quais dados vão em quais peças? Ex: Conceito 1 usa '+180 mil marcas', Conceito 2 usa case X."
+
+3. CTA: Se não mencionar para onde direcionar o usuário:
+   → needs_clarification=true
+   → comment: "Qual o CTA? Trial gratuito, fale com vendas ou outro?"
+   ATENÇÃO: Para campanhas de performance, ads ou anúncios pagos, CTA é SEMPRE obrigatório.
+   Mesmo que o briefing seja longo e detalhado, se não tiver CTA explícito → pergunta.
+
+PADRÃO DE BRIEFING INSUFICIENTE PARA COPY (detectar ativamente):
+Um briefing pode ter muito texto e ainda ser insuficiente. Sinais de alerta:
+- Fala em "X conceitos" ou "X ângulos" sem descrever o que cada um comunica
+- Lista dados, cases ou números sem dizer qual vai em qual peça
+- Dá referências de tom, tendências ou direção visual mas não diz O QUE escrever
+- Muito contexto de estratégia/mercado, zero direção de execução por peça
+
+Se o briefing tem esse padrão → needs_clarification=true, mesmo que seja longo e detalhado.
+Quantidade de informação não é qualidade de briefing.
+Se não dá pra escrever a headline agora com o que foi fornecido, falta informação.
+Máximo 3 perguntas. Diretas. Sem explicar o motivo de cada uma.
+Se houver múltiplas perguntas de copy, agrupe todas em um único "comment".
+
 CRIAÇÃO DE SUBTASKS (só quando briefing OK E needs_clarification=false):
 Identifique as subtasks necessárias com base no briefing.
 
@@ -349,14 +381,22 @@ export async function POST(req: Request) {
     const summary = (fields.summary as string) ?? "";
     const description = extractDescription(fields.description);
     const duedate = (fields.duedate as string) ?? null;
+    const jiraLink = `${process.env.JIRA_BASE_URL?.trim() || ""}/browse/${issueKey}`;
+    const solicitante = reporter?.displayName || "desconhecido";
 
     // Step 2 — detect presentation request
     if (isPresentation(summary, description)) {
       const msg =
         "Apresentações: atualmente só revisamos copy e melhoramos visual. " +
         "Precisamos da apresentação no template da Nuvemshop já com conteúdo completo.";
-      const commented = await postJiraComment(issueKey, msg);
-      return NextResponse.json({ issueKey, commented, stage: "presentation" });
+      await postJiraComment(issueKey, msg);
+      await sendSlackAlert(
+        `🗂️ *Briefing novo:* ${summary}\n` +
+        `Solicitante: ${solicitante}\n` +
+        `⚠️ É uma apresentação — respondido com instrução de template.\n` +
+        `🔗 ${jiraLink}`
+      );
+      return NextResponse.json({ issueKey, stage: "presentation" });
     }
 
     // Step 3 — analyze briefing with Claude
@@ -373,26 +413,37 @@ export async function POST(req: Request) {
     if (!jsonMatch) throw new Error("Claude returned no JSON");
     const analysis: BriefingAnalysis = JSON.parse(jsonMatch[0]);
 
-    // Step 4a — briefing has issues → post comment and stop
+    // Step 4a — briefing has issues → post comment, notify Slack and stop
     if (analysis.has_issues && analysis.comment) {
-      const commented = await postJiraComment(issueKey, analysis.comment);
-      return NextResponse.json({ issueKey, commented, stage: "briefing_issues", analysis });
+      await postJiraComment(issueKey, analysis.comment);
+      await sendSlackAlert(
+        `🗂️ *Briefing novo:* ${summary}\n` +
+        `Solicitante: ${solicitante}\n` +
+        `❌ Briefing incompleto — pedi informações no Jira.\n` +
+        `🔗 ${jiraLink}`
+      );
+      return NextResponse.json({ issueKey, stage: "briefing_issues", analysis });
     }
 
-    // Step 4b — needs clarification (video formats or static format variations)
-    //            → post question and stop, no subtasks created
+    // Step 4b — needs clarification → post question, notify Slack and stop
     if (analysis.needs_clarification && analysis.comment) {
-      const commented = await postJiraComment(issueKey, analysis.comment);
-      return NextResponse.json({ issueKey, commented, stage: "pending_clarification", analysis });
+      await postJiraComment(issueKey, analysis.comment);
+      await sendSlackAlert(
+        `🗂️ *Briefing novo:* ${summary}\n` +
+        `Solicitante: ${solicitante}\n` +
+        `❓ Precisa de esclarecimento — fiz pergunta no Jira.\n` +
+        `🔗 ${jiraLink}`
+      );
+      return NextResponse.json({ issueKey, stage: "pending_clarification", analysis });
     }
 
-    // Step 4c — static range adjusted (Rule 2): post informational comment and continue
+    // Step 4c — static range adjusted: post informational comment and continue
     if (analysis.static_range_adjusted) {
       const { original_min, original_max, using } = analysis.static_range_adjusted;
-      const rangeMsg =
-        `Consideramos ${using} peças (mínimo do range indicado de ${original_min} a ${original_max}). ` +
-        `Se precisar do máximo, nos avise.`;
-      await postJiraComment(issueKey, rangeMsg);
+      await postJiraComment(
+        issueKey,
+        `Consideramos ${using} peças (mínimo do range indicado de ${original_min} a ${original_max}). Se precisar do máximo, nos avise.`
+      );
     }
 
     // Step 5 — briefing OK → create subtasks
@@ -435,10 +486,16 @@ export async function POST(req: Request) {
             `Tipos de job que a Monstra já executou: animações, edição de vídeo, artes de campanha, ` +
             `material rico, templates, peças para eventos, adaptações e desdobramentos.`;
 
-          const commented = await postJiraComment(issueKey, monstraComment);
+          await postJiraComment(issueKey, monstraComment);
+          await sendSlackAlert(
+            `🗂️ *Briefing novo:* ${summary}\n` +
+            `Solicitante: ${solicitante}\n` +
+            `✅ Briefing completo — subtasks criadas.\n` +
+            `⚠️ ${firstName} está com ${pct}% da capacidade — sugeri Monstra no Jira.\n` +
+            `🔗 ${jiraLink}`
+          );
           return NextResponse.json({
             issueKey,
-            commented,
             stage: "monstra_suggestion",
             responsible: memberName,
             capacityPct: pct,
@@ -447,6 +504,14 @@ export async function POST(req: Request) {
         }
       }
     }
+
+    // Step 7 — all good, notify Slack
+    await sendSlackAlert(
+      `🗂️ *Briefing novo:* ${summary}\n` +
+      `Solicitante: ${solicitante}\n` +
+      `✅ Briefing completo — subtasks criadas${createdSubtasks.length ? `: ${createdSubtasks.map(s => s.summary).join(", ")}` : ""}.\n` +
+      `🔗 ${jiraLink}`
+    );
 
     return NextResponse.json({
       issueKey,
