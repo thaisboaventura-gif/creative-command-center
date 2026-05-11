@@ -1,0 +1,212 @@
+import type { TeamMember, Task } from "./types";
+
+export const mockTeam: TeamMember[] = [
+  {
+    name: "Beatriz Oliveira",
+    avatar: "BO",
+    role: "Designer Senior",
+    capacityPercent: 110,
+    tasks: [
+      {
+        id: "1",
+        key: "BDSL-32091",
+        title: "Campanha Black Friday — Banners principais",
+        status: "in_progress",
+        priority: "high",
+        assignee: "Beatriz Oliveira",
+        dueDate: "2026-04-18",
+        estimatedDays: 3,
+        createdAt: "2026-04-10",
+      },
+      {
+        id: "2",
+        key: "BDSL-32088",
+        title: "Posts Instagram — Lojista Premium Q2",
+        status: "in_progress",
+        priority: "medium",
+        assignee: "Beatriz Oliveira",
+        dueDate: "2026-04-22",
+        estimatedDays: 2,
+        createdAt: "2026-04-08",
+      },
+      {
+        id: "3",
+        key: "BDSL-32095",
+        title: "Adaptação email marketing — Dia das Mães",
+        status: "to_do",
+        priority: "medium",
+        assignee: "Beatriz Oliveira",
+        dueDate: "2026-04-25",
+        estimatedDays: 1,
+        createdAt: "2026-04-14",
+      },
+    ],
+  },
+  {
+    name: "Lucas Mendes",
+    avatar: "LM",
+    role: "Motion Designer",
+    capacityPercent: 70,
+    tasks: [
+      {
+        id: "4",
+        key: "BDSL-32085",
+        title: "Vídeo institucional — Nuvemshop Next",
+        status: "in_progress",
+        priority: "critical",
+        assignee: "Lucas Mendes",
+        dueDate: "2026-04-28",
+        estimatedDays: 5,
+        createdAt: "2026-04-07",
+      },
+      {
+        id: "5",
+        key: "BDSL-32092",
+        title: "Stories animados — Campanha Abril",
+        status: "to_do",
+        priority: "low",
+        assignee: "Lucas Mendes",
+        dueDate: "2026-04-23",
+        estimatedDays: 1,
+        createdAt: "2026-04-12",
+      },
+    ],
+  },
+  {
+    name: "Marina Costa",
+    avatar: "MC",
+    role: "Designer Pleno",
+    capacityPercent: 40,
+    tasks: [
+      {
+        id: "6",
+        key: "BDSL-32090",
+        title: "Landing page — Evento Lojistas SP",
+        status: "in_progress",
+        priority: "medium",
+        assignee: "Marina Costa",
+        dueDate: "2026-04-24",
+        estimatedDays: 2,
+        createdAt: "2026-04-09",
+      },
+    ],
+  },
+  {
+    name: "Rafael Santos",
+    avatar: "RS",
+    role: "Copywriter",
+    capacityPercent: 85,
+    tasks: [
+      {
+        id: "7",
+        key: "BDSL-32087",
+        title: "Textos campanha Dia das Mães — todos os formatos",
+        status: "in_progress",
+        priority: "high",
+        assignee: "Rafael Santos",
+        dueDate: "2026-04-20",
+        estimatedDays: 3,
+        createdAt: "2026-04-08",
+      },
+      {
+        id: "8",
+        key: "BDSL-32093",
+        title: "Headlines A/B test — Performance ads",
+        status: "to_do",
+        priority: "medium",
+        assignee: "Rafael Santos",
+        dueDate: "2026-04-22",
+        estimatedDays: 1,
+        createdAt: "2026-04-13",
+      },
+    ],
+  },
+];
+
+export const mockNewDemands: Task[] = [
+  {
+    id: "9",
+    key: "BDSL-32096",
+    title: "Campanha de Natal — Lojistas Premium",
+    status: "to_do",
+    priority: "high",
+    assignee: "",
+    dueDate: "2026-04-30",
+    estimatedDays: 5,
+    createdAt: "2026-04-14",
+    briefingAnalysis: {
+      summary:
+        "Pedem 3 banners (hero + 2 secundários), 1 vídeo de 15 segundos, 6 posts para redes sociais. Campanha focada em lojistas premium com tom sofisticado.",
+      complexity: "alta",
+      estimatedEffort: "~5 dias de design + 2 dias de motion + 1 dia de copy",
+      missingInfo: [
+        "Tamanhos específicos dos banners",
+        "Referências visuais da campanha",
+        "Texto/roteiro do vídeo",
+        "Público-alvo detalhado (segmento dos lojistas)",
+      ],
+      suggestedQuestions: [
+        "Quais os tamanhos dos banners? (1080x1080? 1920x600? 728x90?)",
+        "Tem referência visual de campanha anterior ou de concorrente?",
+        "O texto do vídeo será fornecido pelo time de marketing ou criamos?",
+        "Qual o segmento dos lojistas premium que queremos atingir?",
+      ],
+      deliverables: [
+        "3 banners estáticos",
+        "1 vídeo 15s",
+        "6 posts redes sociais",
+      ],
+    },
+  },
+  {
+    id: "10",
+    key: "BDSL-32097",
+    title: "Webinar Nuvemshop — Peças de divulgação",
+    status: "to_do",
+    priority: "medium",
+    assignee: "",
+    dueDate: "2026-04-26",
+    estimatedDays: 2,
+    createdAt: "2026-04-15",
+    briefingAnalysis: {
+      summary:
+        "Precisam de peças de divulgação para um webinar: 1 banner para email, 1 post LinkedIn, 1 post Instagram, 1 thumbnail YouTube.",
+      complexity: "baixa",
+      estimatedEffort: "~1 dia de design + 0.5 dia de copy",
+      missingInfo: ["Palestrantes e fotos", "Horário do webinar"],
+      suggestedQuestions: [
+        "Quem são os palestrantes? Tem fotos em alta resolução?",
+        "Qual o horário e link de inscrição do webinar?",
+      ],
+      deliverables: [
+        "1 banner email",
+        "1 post LinkedIn",
+        "1 post Instagram",
+        "1 thumbnail YouTube",
+      ],
+    },
+  },
+];
+
+export const mockAlerts = [
+  {
+    type: "capacity" as const,
+    message: "Beatriz está com 110% da capacidade alocada",
+    severity: "critical" as const,
+  },
+  {
+    type: "deadline" as const,
+    message: "BDSL-32091 (Black Friday) vence em 3 dias e está em andamento",
+    severity: "warning" as const,
+  },
+  {
+    type: "briefing" as const,
+    message: "BDSL-32096 tem briefing incompleto — faltam 4 informações",
+    severity: "info" as const,
+  },
+  {
+    type: "capacity" as const,
+    message: "Rafael está com 85% — cuidado ao alocar novas demandas de copy",
+    severity: "warning" as const,
+  },
+];
