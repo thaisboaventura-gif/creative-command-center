@@ -406,10 +406,11 @@ function Btn({ children, onClick }: { children: React.ReactNode; onClick: () => 
 
 function IncomingPanel({ items }: { items: IncomingItem[] }) {
   const now = new Date();
-  const weekAgo = new Date(now);
-  weekAgo.setDate(now.getDate() - 7);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
 
-  const thisWeek = items.filter((i) => new Date(i.createdAt) >= weekAgo);
+  const thisWeek = items.filter((i) => new Date(i.createdAt) >= monday);
   const assigned = thisWeek.filter((i) => i.assignee);
   const unassigned = thisWeek.filter((i) => !i.assignee);
 
