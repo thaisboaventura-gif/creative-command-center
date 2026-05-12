@@ -180,6 +180,80 @@ async function postFriendlyComment(
   return res.ok;
 }
 
+// --- Fetch issue comments ---
+
+interface JiraComment {
+  author: { displayName?: string };
+  body: unknown;
+}
+
+function extractADFText(body: unknown): string {
+  if (!body) return "";
+  if (typeof body === "string") return body;
+  try {
+    const doc = body as { content?: Array<{ content?: Array<{ text?: string }> }> };
+    return (doc.content ?? [])
+      .flatMap((block) => block.content?.map((n) => n.text || "") ?? [])
+      .filter(Boolean)
+      .join(" ");
+  } catch {
+    return JSON.stringify(body).slice(0, 500);
+  }
+}
+
+async function fetchIssueComments(issueKey: string): Promise<Array<{ author: string; text: string }>> {
+  const { base, auth } = getJiraAuth();
+  if (!base) return [];
+  try {
+    const res = await fetch(
+      `${base}/rest/api/3/issue/${issueKey}/comment?maxResults=50&orderBy=created`,
+      { headers: { Authorization: `Basic ${auth}`, Accept: "application/json" } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.comments as JiraComment[] ?? []).map((c) => ({
+      author: c.author?.displayName || "desconhecido",
+      text: extractADFText(c.body),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// --- Fetch Google Doc content ---
+
+const GDOC_REGEX = /docs\.google\.com\/document\/d\/([A-Za-z0-9_-]+)/;
+
+async function fetchGoogleDocContent(text: string): Promise<string | null> {
+  const match = text.match(GDOC_REGEX);
+  if (!match) return null;
+  const docId = match[1];
+  try {
+    const res = await fetch(
+      `https://docs.google.com/document/d/${docId}/export?format=txt`,
+      { redirect: "follow" }
+    );
+    if (!res.ok) {
+      console.log(`Google Doc fetch failed: ${res.status} — assuming edit-only job`);
+      return null;
+    }
+    const txt = await res.text();
+    return txt.slice(0, 8000); // cap to avoid huge tokens
+  } catch (e) {
+    console.log(`Google Doc fetch error: ${e} — assuming edit-only job`);
+    return null;
+  }
+}
+
+function detectCartela(docText: string): boolean {
+  const lower = docText.toLowerCase();
+  const cartelaKeywords = ["cartela", "insert", "texto na tela", "letreiro", "lower third", "grafismo"];
+  const editOnlyKeywords = ["corte", "edição", "edicao", "legenda", "ajuste", "montagem"];
+  const hasCartela = cartelaKeywords.some((k) => lower.includes(k));
+  const editOnly = editOnlyKeywords.some((k) => lower.includes(k)) && !hasCartela;
+  return hasCartela && !editOnly;
+}
+
 async function createSubtask(
   parentKey: string,
   summary: string,
@@ -437,7 +511,20 @@ Regras para "comment":
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
-    const issue = payload.issue;
+
+    // Support both issue_created and comment_created webhook events
+    const webhookEvent: string = payload.webhookEvent || "";
+    let issue = payload.issue;
+
+    // For comment events, skip if the commenter is our bot (avoid infinite loops)
+    if (webhookEvent === "comment_created" || webhookEvent === "comment_updated") {
+      const commenterEmail: string = payload.comment?.author?.emailAddress || "";
+      const botEmail = process.env.JIRA_EMAIL?.trim() || "";
+      if (commenterEmail === botEmail) {
+        return NextResponse.json({ skipped: "bot_comment" });
+      }
+    }
+
     if (!issue) return NextResponse.json({ skipped: "no issue in payload" });
 
     const issueKey = issue.key as string;
@@ -477,14 +564,38 @@ export async function POST(req: Request) {
       return NextResponse.json({ issueKey, stage: "presentation" });
     }
 
-    // Step 3 — analyze briefing with Claude
+    // Step 3 — enrich context: fetch comments + Google Doc
     const today = new Date();
     const todayStr = today.toISOString().split("T")[0];
     const workDaysAvailable = duedate ? countWorkDays(today, new Date(duedate)) : null;
 
+    // 3a — fetch all existing comments
+    const issueComments = await fetchIssueComments(issueKey);
+    const commentsContext = issueComments.length
+      ? "\n\nComentários anteriores no ticket:\n" +
+        issueComments.map((c, i) => `[${i + 1}] ${c.author}: "${c.text}"`).join("\n")
+      : "";
+
+    // 3b — fetch Google Doc if linked
+    const fullText = `${description} ${commentsContext}`;
+    const docContent = await fetchGoogleDocContent(fullText);
+    const docContext = docContent
+      ? `\n\nConteúdo do Google Doc vinculado:\n${docContent}`
+      : "";
+    const hasCartelaInDoc = docContent ? detectCartela(docContent) : false;
+
+    const userPrompt =
+      `Analise este briefing:\n\nTítulo: ${summary}\n\nDescrição:\n${description || "(sem descrição)"}` +
+      (duedate ? `\n\nPrazo: ${duedate}` : "") +
+      commentsContext +
+      docContext +
+      (docContent && !hasCartelaInDoc ? "\n\n[Doc analisado: sem cartelas — job é só edição/motion direto]" : "") +
+      (hasCartelaInDoc ? "\n\n[Doc analisado: contém cartelas — criar subtask CARTELA (Eduardo) antes do MOTION (Larissa)]" : "") +
+      (!docContent && fullText.match(GDOC_REGEX) ? "\n\n[Google Doc vinculado não acessível — assumir job de edição/motion direto]" : "");
+
     const analysisRaw = await callClaude(
       buildAnalysisPrompt(todayStr, duedate, workDaysAvailable),
-      `Analise este briefing:\n\nTítulo: ${summary}\n\nDescrição:\n${description || "(sem descrição)"}${duedate ? `\n\nPrazo: ${duedate}` : ""}`
+      userPrompt
     );
 
     const jsonMatch = analysisRaw.match(/\{[\s\S]*\}/);
