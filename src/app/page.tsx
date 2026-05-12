@@ -428,17 +428,19 @@ export default function Dashboard() {
                     const isWaiting = bar.task.status === "in_review";
                     const barBg = bar.isDone
                       ? "#9ca3af"
-                      : bar.overdue
-                      ? "#ef4444"
                       : isWaiting
                       ? "#fca5a5"
+                      : bar.overdue
+                      ? "#ef4444"
                       : bar.color;
                     const barLabel = bar.isDone
                       ? `✅ ${bar.task.title}`
-                      : bar.overdue
-                      ? `⚠️ ${bar.task.title}`
+                      : isWaiting && bar.overdue
+                      ? `⚠️⏳ ${bar.task.title}`
                       : isWaiting
                       ? `⏳ ${bar.task.title}`
+                      : bar.overdue
+                      ? `⚠️ ${bar.task.title}`
                       : bar.task.title;
                     const titleTip = bar.isDone
                       ? `✅ Entregue · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`

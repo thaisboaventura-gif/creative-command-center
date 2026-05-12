@@ -29,7 +29,12 @@ function mapStatus(name: string): string {
   const l = name.toLowerCase();
   if (l.includes("done") || l.includes("conclu") || l.includes("finaliz"))
     return "done";
-  if (l.includes("review") || l.includes("revis")) return "in_review";
+  if (
+    l.includes("review") || l.includes("revis") ||
+    l.includes("waiting") || l.includes("aguard") ||
+    l.includes("feedback") || l.includes("approval") || l.includes("aprova")
+  )
+    return "in_review";
   if (
     l.includes("progress") ||
     l.includes("andamento") ||
@@ -107,17 +112,13 @@ export async function GET() {
 
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
-    const boardJql = `project = ${project} AND status != Done AND assignee IS NOT EMPTY ORDER BY assignee, priority DESC`;
+    const boardJql = `project = ${project} AND status != Done AND assignee IS NOT EMPTY ORDER BY updated DESC`;
     const newJql = `project = ${project} AND created >= -14d ORDER BY created DESC`;
 
     const [boardIssues, newIssues] = await Promise.all([
-      fetchAllIssues(base, auth, boardJql, 3),
+      fetchAllIssues(base, auth, boardJql, 6),
       fetchAllIssues(base, auth, newJql, 1),
     ]);
-
-    // Log all unique assignees to debug
-    const allAssignees = [...new Set(boardIssues.map(i => i.fields?.assignee?.displayName).filter(Boolean))];
-    console.log("ALL ASSIGNEES IN JIRA:", JSON.stringify(allAssignees));
 
     // Filter to only the direct team
     const teamIssues = boardIssues.filter((issue) =>
