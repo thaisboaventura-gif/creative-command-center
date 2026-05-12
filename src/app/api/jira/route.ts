@@ -18,7 +18,7 @@ interface JiraIssue {
   };
 }
 
-const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "lucas", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli"];
+const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli"];
 
 function isTeamMember(displayName: string): boolean {
   const lower = displayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -55,6 +55,9 @@ function mapPriority(name: string): string {
   return "medium";
 }
 
+// Country custom field candidates for BDSL project
+const COUNTRY_FIELDS = ["customfield_21359", "customfield_15854", "customfield_10670"];
+
 const FIELDS = [
   "summary",
   "status",
@@ -64,7 +67,20 @@ const FIELDS = [
   "duedate",
   "labels",
   "timeoriginalestimate",
+  ...COUNTRY_FIELDS,
 ];
+
+function isBrasil(issue: JiraIssue): boolean {
+  for (const f of COUNTRY_FIELDS) {
+    const val = issue.fields[f];
+    if (!val) continue;
+    const str = JSON.stringify(val).toLowerCase();
+    if (str.includes("brasil") || str.includes("brazil") || str.includes("br")) return true;
+  }
+  // If no country field is set at all, include the task (field might not be used)
+  const hasAnyCountry = COUNTRY_FIELDS.some(f => issue.fields[f]);
+  return !hasAnyCountry;
+}
 
 async function fetchAllIssues(
   base: string,
@@ -120,9 +136,11 @@ export async function GET() {
       fetchAllIssues(base, auth, newJql, 1),
     ]);
 
-    // Filter to only the direct team
+    // Filter to only the direct team members AND country = Brasil
     const teamIssues = boardIssues.filter((issue) =>
-      issue.fields?.assignee ? isTeamMember(issue.fields.assignee.displayName) : false
+      issue.fields?.assignee
+        ? isTeamMember(issue.fields.assignee.displayName) && isBrasil(issue)
+        : false
     );
 
     // Build team map
