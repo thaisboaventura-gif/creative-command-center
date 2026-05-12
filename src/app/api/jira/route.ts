@@ -235,6 +235,7 @@ export async function GET() {
         totalFetched: boardIssues.length,
         teamFiltered: teamIssues.length,
         teamMembers: team.map((m) => m.name),
+        allAssignees: [...new Set(boardIssues.map(i => i.fields?.assignee?.displayName).filter(Boolean))],
       },
     });
   } catch (error) {
