@@ -18,7 +18,7 @@ interface JiraIssue {
   };
 }
 
-const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "lucas", "larissa", "rafaela", "ceragioli"];
+const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "lucas", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli"];
 
 function isTeamMember(displayName: string): boolean {
   const lower = displayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
