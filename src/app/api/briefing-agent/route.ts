@@ -108,6 +108,78 @@ async function postJiraComment(issueKey: string, text: string): Promise<boolean>
   return res.ok;
 }
 
+function buildFriendlyADF(
+  accountId: string | null,
+  bodyText: string,
+  isCopyRelated: boolean
+): object[] {
+  const nodes: object[] = [];
+
+  // Greeting with mention
+  nodes.push({
+    type: "paragraph",
+    content: accountId
+      ? [
+          { type: "text", text: "Olá, " },
+          { type: "mention", attrs: { id: accountId } },
+          { type: "text", text: "! 👋" },
+        ]
+      : [{ type: "text", text: "Olá! 👋" }],
+  });
+
+  // Context line
+  nodes.push({
+    type: "paragraph",
+    content: [{ type: "text", text: "Analisamos seu briefing e verificamos que faltam algumas informações. Consegue nos ajudar? 🙏" }],
+  });
+
+  // Main body — split by lines
+  for (const line of bodyText.split("\n")) {
+    if (line.trim()) {
+      nodes.push({ type: "paragraph", content: [{ type: "text", text: line }] });
+    }
+  }
+
+  // Copy tip
+  if (isCopyRelated) {
+    nodes.push({
+      type: "paragraph",
+      content: [{ type: "text", text: "📝 Para agilizar, recomendamos criar um direcionamento de copy usando nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc" }],
+    });
+  }
+
+  // Closing
+  nodes.push({
+    type: "paragraph",
+    content: [{ type: "text", text: "Qualquer dúvida, é só chamar! 😊" }],
+  });
+
+  return nodes;
+}
+
+async function postFriendlyComment(
+  issueKey: string,
+  accountId: string | null,
+  bodyText: string,
+  isCopyRelated = false
+): Promise<boolean> {
+  const { base, auth } = getJiraAuth();
+  if (!base) return false;
+
+  const content = buildFriendlyADF(accountId, bodyText, isCopyRelated);
+
+  const res = await fetch(`${base}/rest/api/3/issue/${issueKey}/comment`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body: { type: "doc", version: 1, content } }),
+  });
+  return res.ok;
+}
+
 async function createSubtask(
   parentKey: string,
   summary: string,
@@ -371,7 +443,7 @@ export async function POST(req: Request) {
     const issueKey = issue.key as string;
     const fields = issue.fields as Record<string, unknown>;
     const project = (process.env.JIRA_PROJECT_KEY?.trim() || "BDSL");
-    const reporter = fields.reporter as { displayName?: string; emailAddress?: string } | null;
+    const reporter = fields.reporter as { displayName?: string; emailAddress?: string; accountId?: string } | null;
 
     // Step 1 — ignore internal team
     if (reporter && isInternalUser(reporter)) {
@@ -383,13 +455,19 @@ export async function POST(req: Request) {
     const duedate = (fields.duedate as string) ?? null;
     const jiraLink = `${process.env.JIRA_BASE_URL?.trim() || ""}/browse/${issueKey}`;
     const solicitante = reporter?.displayName || "desconhecido";
+    const reporterAccountId = reporter?.accountId || null;
+
+    // Detect copy-related job
+    const copyKeywords = ["copy", "texto", "conteúdo", "conteudo", "caption", "legenda"];
+    const isCopyJob = (text: string) =>
+      copyKeywords.some((k) => text.toLowerCase().includes(k));
 
     // Step 2 — detect presentation request
     if (isPresentation(summary, description)) {
       const msg =
         "Apresentações: atualmente só revisamos copy e melhoramos visual. " +
         "Precisamos da apresentação no template da Nuvemshop já com conteúdo completo.";
-      await postJiraComment(issueKey, msg);
+      await postFriendlyComment(issueKey, reporterAccountId, msg);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
         `Solicitante: ${solicitante}\n` +
@@ -415,7 +493,8 @@ export async function POST(req: Request) {
 
     // Step 4a — briefing has issues → post comment, notify Slack and stop
     if (analysis.has_issues && analysis.comment) {
-      await postJiraComment(issueKey, analysis.comment);
+      const copyRelated = analysis.responsible === "beatriz" || analysis.missing_objective || isCopyJob(`${summary} ${description}`);
+      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
         `Solicitante: ${solicitante}\n` +
@@ -427,7 +506,8 @@ export async function POST(req: Request) {
 
     // Step 4b — needs clarification → post question, notify Slack and stop
     if (analysis.needs_clarification && analysis.comment) {
-      await postJiraComment(issueKey, analysis.comment);
+      const copyRelated = analysis.responsible === "beatriz" || analysis.missing_objective || isCopyJob(`${summary} ${description}`);
+      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
         `Solicitante: ${solicitante}\n` +
@@ -440,8 +520,9 @@ export async function POST(req: Request) {
     // Step 4c — static range adjusted: post informational comment and continue
     if (analysis.static_range_adjusted) {
       const { original_min, original_max, using } = analysis.static_range_adjusted;
-      await postJiraComment(
+      await postFriendlyComment(
         issueKey,
+        reporterAccountId,
         `Consideramos ${using} peças (mínimo do range indicado de ${original_min} a ${original_max}). Se precisar do máximo, nos avise.`
       );
     }
