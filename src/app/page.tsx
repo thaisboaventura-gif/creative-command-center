@@ -78,77 +78,132 @@ function dayLabel(d: Date): string {
   return ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
 }
 
-function dayNum(d: Date): string {
-  return `${d.getDate()}/${d.getMonth() + 1}`;
+/* ── Gantt bars layout ── */
+
+interface Bar {
+  task: TaskItem;
+  startCol: number;     // 1..10
+  endCol: number;       // 1..10 (inclusive)
+  lane: number;         // 0, 1, 2…
+  startsBefore: boolean; // task started before visible window
+  overdue: boolean;
+  project: string;
+  color: string;
 }
 
-function buildSchedule(
-  tasks: TaskItem[],
-  days: Date[],
-  effectiveDaily: number
-): { day: Date; items: { task: TaskItem; isDelivery: boolean; overdue: boolean; h: number }[]; totalH: number }[] {
+function extractProject(title: string): string {
+  // "LUMI MERCHANTS | COPY" → "LUMI MERCHANTS"
+  // "Banner Black Friday — landing" → "Banner Black Friday"
+  const pipe = title.split("|")[0];
+  const dash = pipe.split(" — ")[0];
+  const cleaned = dash.trim();
+  if (cleaned.length <= 30) return cleaned;
+  return cleaned.split(" ").slice(0, 3).join(" ");
+}
+
+const PROJECT_PALETTE = [
+  "#5b6cff", // blue
+  "#6dd49e", // green
+  "#ee8094", // pink
+  "#fb923c", // orange
+  "#a78bfa", // purple
+  "#2dd4bf", // teal
+  "#38bdf8", // cyan
+  "#facc15", // yellow
+  "#f472b6", // rose
+  "#84cc16", // lime
+];
+
+function projectColor(project: string): string {
+  let hash = 0;
+  for (let i = 0; i < project.length; i++) {
+    hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
+  }
+  return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
+}
+
+function dayIndex(d: Date, days: Date[]): number {
+  for (let i = 0; i < days.length; i++) {
+    if (sameDay(d, days[i])) return i;
+  }
+  return -1;
+}
+
+function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const nowMs = now.getTime();
+  const firstDay = new Date(days[0]); firstDay.setHours(0, 0, 0, 0);
+  const lastDay = new Date(days[days.length - 1]); lastDay.setHours(0, 0, 0, 0);
 
-  const active = tasks
-    .filter((t) => t.status !== "done")
-    .sort((a, b) => {
-      if (!a.dueDate && !b.dueDate) return 0;
-      if (!a.dueDate) return 1;
-      if (!b.dueDate) return -1;
-      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-    });
+  const candidates = tasks
+    .filter((t) => t.status !== "done" && t.dueDate)
+    .map((task) => {
+      const due = new Date(task.dueDate!); due.setHours(0, 0, 0, 0);
+      const created = new Date(task.createdAt); created.setHours(0, 0, 0, 0);
 
-  const capMap = new Map<string, number>();
-  const cellMap = new Map<string, { task: TaskItem; isDelivery: boolean; overdue: boolean; h: number }[]>();
-  for (const d of days) {
-    capMap.set(d.toDateString(), effectiveDaily);
-    cellMap.set(d.toDateString(), []);
-  }
+      // Skip if entirely outside visible window
+      if (due.getTime() < firstDay.getTime()) return null;
+      if (created.getTime() > lastDay.getTime()) return null;
 
-  for (const task of active) {
-    let remaining = task.estimatedHours;
-    const due = task.dueDate ? new Date(task.dueDate) : null;
-    if (due) due.setHours(0, 0, 0, 0);
-    const isOverdue = due ? due.getTime() < nowMs : false;
-    if (due && (nowMs - due.getTime()) / 86400000 > STALE) continue;
-
-    const eligible = days.filter((d) => {
-      const dMs = new Date(d).setHours(0, 0, 0, 0);
-      if (due && !isOverdue) return dMs <= due.getTime();
-      return true;
-    });
-
-    for (const d of eligible) {
-      if (remaining <= 0) break;
-      const key = d.toDateString();
-      const cap = capMap.get(key) ?? 0;
-      if (cap <= 0) continue;
-      const h = Math.min(remaining, cap);
-      remaining -= h;
-      capMap.set(key, cap - h);
-      const isDelivery = due ? sameDay(d, due) : false;
-      cellMap.get(key)!.push({ task, isDelivery, overdue: isOverdue, h });
-    }
-
-    if (remaining > 0 && eligible.length > 0) {
-      const lastKey = eligible[eligible.length - 1].toDateString();
-      const existing = cellMap.get(lastKey)!.find((x) => x.task.id === task.id);
-      if (existing) {
-        existing.h += remaining;
+      // Find closest visible day index for start
+      let startCol = -1;
+      const startsBefore = created.getTime() < firstDay.getTime();
+      if (startsBefore) {
+        startCol = 0;
       } else {
-        const isDelivery = due ? sameDay(eligible[eligible.length - 1], due) : false;
-        cellMap.get(lastKey)!.push({ task, isDelivery, overdue: isOverdue, h: remaining });
+        // walk forward to find first visible day >= created
+        for (let i = 0; i < days.length; i++) {
+          const di = new Date(days[i]); di.setHours(0, 0, 0, 0);
+          if (di.getTime() >= created.getTime()) { startCol = i; break; }
+        }
+        if (startCol === -1) return null;
+      }
+
+      // Find end col (clamp to last visible day)
+      let endCol = -1;
+      for (let i = days.length - 1; i >= 0; i--) {
+        const di = new Date(days[i]); di.setHours(0, 0, 0, 0);
+        if (di.getTime() <= due.getTime()) { endCol = i; break; }
+      }
+      if (endCol === -1) endCol = startCol;
+      if (endCol < startCol) endCol = startCol;
+
+      const overdue = due.getTime() < nowMs;
+      const project = extractProject(task.title);
+      return {
+        task,
+        startCol: startCol + 1,
+        endCol: endCol + 1,
+        lane: 0,
+        startsBefore,
+        overdue,
+        project,
+        color: projectColor(project),
+      } as Bar;
+    })
+    .filter((x): x is Bar => x !== null)
+    .sort((a, b) => a.startCol - b.startCol || (b.endCol - b.startCol) - (a.endCol - a.startCol));
+
+  // Lane allocation: greedy first-fit
+  const lanes: number[] = []; // for each lane: last occupied endCol
+  for (const bar of candidates) {
+    let placed = false;
+    for (let l = 0; l < lanes.length; l++) {
+      if (bar.startCol > lanes[l]) {
+        bar.lane = l;
+        lanes[l] = bar.endCol;
+        placed = true;
+        break;
       }
     }
+    if (!placed) {
+      bar.lane = lanes.length;
+      lanes.push(bar.endCol);
+    }
   }
 
-  return days.map((d) => {
-    const key = d.toDateString();
-    const items = cellMap.get(key) || [];
-    return { day: d, items, totalH: items.reduce((s, x) => s + x.h, 0) };
-  });
+  return candidates;
 }
 
 function fmtH(h: number): string {
@@ -158,11 +213,6 @@ function fmtH(h: number): string {
   return m > 0 ? `${f}h${String(m).padStart(2, "0")}` : `${f}h`;
 }
 
-function shortT(t: string, max = 18): string {
-  return t.length > max ? t.slice(0, max) + "…" : t;
-}
-
-const STALE = 60;
 const AREA_COLORS: Record<string, string> = { design: "#7c3aed", copy: "#2563eb", motion: "#ea580c" };
 
 /* ── Component ── */
@@ -198,15 +248,11 @@ export default function Dashboard() {
 
   const rows = sorted.map((m) => {
     const cfg = getConfig(m.name);
-    const effectiveDaily = cfg.hasFreela ? cfg.dailyH + 8 : cfg.dailyH;
     const active = m.tasks.filter((t) => t.status !== "done");
-
-    const dayCells = buildSchedule(active, days, effectiveDaily);
-
-    const twoWeekH = Math.round(dayCells.reduce((s, c) => s + c.totalH, 0) * 10) / 10;
+    const bars = layoutBars(active, days);
+    const lanes = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1;
     const backlog = active.filter((t) => !t.dueDate).length;
-
-    return { member: m, cfg, effectiveDaily, dayCells, twoWeekH, backlog };
+    return { member: m, cfg, bars, lanes, backlog };
   });
 
   if (src === "loading") return <Shell><p style={{ color: "#9ca3af", textAlign: "center", padding: 80 }}>Conectando ao Jira...</p></Shell>;
@@ -228,131 +274,187 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Grid */}
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "130px repeat(10, 1fr)", gap: 1, background: "#e5e7eb", borderRadius: 10, overflow: "hidden", minWidth: 900 }}>
+      {/* Gantt */}
+      <div style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3" }}>
+        <div style={{ minWidth: 900 }}>
 
           {/* Header: day columns */}
-          <div style={hCell}> </div>
-          {days.map((d, i) => {
-            const isT = sameDay(d, today);
-            const isMonday = d.getDay() === 1;
-            return (
-              <div key={i} style={{
-                ...hCell,
-                fontWeight: 600,
-                background: isT ? "#ede9fe" : isMonday && i > 0 ? "#f3f0ff" : "#f9fafb",
-                color: isT ? "#7c3aed" : "#6b7280",
-                borderLeft: isMonday && i > 0 ? "2px solid #7c3aed" : "none",
-              }}>
-                <div style={{ fontSize: 10 }}>{dayLabel(d)}</div>
-                <div style={{ fontSize: 11, fontWeight: 700 }}>{dayNum(d)}</div>
-              </div>
-            );
-          })}
+          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(10, 1fr)", borderBottom: "1px solid #eef0f3" }}>
+            <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Time
+            </div>
+            {days.map((d, i) => {
+              const isT = sameDay(d, today);
+              const isMonday = d.getDay() === 1 && i > 0;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    padding: "10px 4px",
+                    textAlign: "center",
+                    borderLeft: isMonday ? "1px solid #eef0f3" : "none",
+                    background: isT ? "#f5f3ff" : "transparent",
+                    position: "relative",
+                  }}
+                >
+                  <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    {dayLabel(d)}
+                  </div>
+                  <div style={{
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: isT ? "white" : "#111",
+                    marginTop: 2,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 26,
+                    height: 26,
+                    borderRadius: "50%",
+                    background: isT ? "#5b6cff" : "transparent",
+                  }}>
+                    {d.getDate()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
           {/* Member rows */}
-          {rows.map(({ member, cfg, effectiveDaily, dayCells, twoWeekH, backlog }) => {
+          {rows.map(({ member, cfg, bars, lanes, backlog }) => {
             const areaC = AREA_COLORS[cfg.area] || "#6b7280";
-            const maxH = effectiveDaily * 10;
-            const pct = twoWeekH / maxH;
-            const statusC = pct >= 0.9 ? "#dc2626" : pct >= 0.6 ? "#ca8a04" : "#16a34a";
+            const rowHeight = Math.max(76, 28 + lanes * 32);
 
             return (
-              <div key={member.name} style={{ display: "contents" }}>
+              <div
+                key={member.name}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "180px repeat(10, 1fr)",
+                  borderBottom: "1px solid #f3f4f6",
+                  minHeight: rowHeight,
+                }}
+              >
                 {/* Name cell */}
-                <div style={{ background: "white", padding: "6px 8px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 24, height: 24, borderRadius: "50%", background: `${areaC}18`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: areaC, flexShrink: 0 }}>
-                      {member.avatar}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#111", lineHeight: 1.1 }}>{firstName(member.name)}</div>
-                      <div style={{ fontSize: 9, color: areaC, fontWeight: 500 }}>{cfg.role}</div>
-                    </div>
+                <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    background: areaC,
+                    color: "white",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    flexShrink: 0,
+                  }}>
+                    {member.avatar}
                   </div>
-                  <div style={{ fontSize: 9, color: statusC, fontWeight: 500, marginTop: 1 }}>
-                    {fmtH(twoWeekH)}/{fmtH(maxH)}
-                    {cfg.hasFreela && <span style={{ color: "#9ca3af" }}> +freela</span>}
-                    {backlog > 0 && <span style={{ color: "#d1d5db" }}> · {backlog} s/prazo</span>}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#111", lineHeight: 1.2 }}>
+                      {firstName(member.name)}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>
+                      {cfg.role}
+                    </div>
+                    {backlog > 0 && (
+                      <div style={{ fontSize: 9, color: "#d1d5db", marginTop: 2 }}>
+                        +{backlog} sem prazo
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Day cells */}
-                {dayCells.map(({ day, items, totalH }, i) => {
-                  const isT = sameDay(day, today);
-                  const isMon = day.getDay() === 1 && i > 0;
-                  const overbooked = totalH > effectiveDaily;
-                  const hasOverdue = items.some((x) => x.overdue);
-                  const bg = items.length === 0 ? "white"
-                    : hasOverdue ? "#fef2f2"
-                    : overbooked ? "#fde68a"
-                    : totalH > effectiveDaily * 0.7 ? "#f5f3ff"
-                    : "#fafafa";
-
-                  return (
-                    <div
-                      key={i}
-                      style={{
-                        background: bg,
-                        padding: "3px 4px",
-                        minHeight: 52,
-                        borderLeft: isT ? "2px solid #7c3aed" : isMon ? "2px solid #e5e7eb" : "none",
-                        position: "relative",
-                      }}
-                    >
-                      {items.slice(0, 5).map((x) => (
-                        <a
-                          key={x.task.id + i}
-                          href={`${JIRA}/${x.task.key}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`${x.task.key}: ${x.task.title}\n${x.task.estimatedDetail} (${fmtH(x.task.estimatedHours)})\nEntrega: ${x.task.dueDate || "sem prazo"}`}
-                          style={{
-                            display: "block",
-                            fontSize: 9,
-                            lineHeight: 1.2,
-                            padding: "2px 4px",
-                            marginBottom: 1,
-                            borderRadius: 3,
-                            textDecoration: "none",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            color: x.overdue ? "#dc2626" : x.isDelivery ? "#7c3aed" : "#374151",
-                            background: x.overdue ? "#fee2e2"
-                              : x.isDelivery ? "#ede9fe"
-                              : "rgba(255,255,255,0.6)",
-                            fontWeight: x.isDelivery || x.overdue ? 600 : 400,
-                            border: x.isDelivery ? "1px solid #c4b5fd" : "1px solid transparent",
-                          }}
-                        >
-                          {x.isDelivery ? "📦 " : ""}{shortT(x.task.title)}
-                        </a>
-                      ))}
-                      {items.length > 5 && (
-                        <span
-                          style={{ fontSize: 8, color: "#6b7280", cursor: "default", textDecoration: "underline dotted" }}
-                          title={items.slice(5).map((x) => `• ${x.task.key}: ${x.task.title}`).join("\n")}
-                        >
-                          +{items.length - 5} mais
-                        </span>
-                      )}
-                      {totalH > 0 && (
-                        <div style={{
+                {/* Bar zone — relative container spanning 10 columns */}
+                <div style={{ gridColumn: "2 / 12", position: "relative", padding: "10px 0" }}>
+                  {/* Vertical day separators */}
+                  {days.map((d, i) => {
+                    const isT = sameDay(d, today);
+                    const isMonday = d.getDay() === 1 && i > 0;
+                    return (
+                      <div
+                        key={i}
+                        style={{
                           position: "absolute",
-                          bottom: 1,
-                          right: 3,
-                          fontSize: 8,
+                          top: 0,
+                          bottom: 0,
+                          left: `${(i / 10) * 100}%`,
+                          width: 1,
+                          background: isT ? "#5b6cff" : isMonday ? "#eef0f3" : "transparent",
+                          opacity: isT ? 0.3 : 1,
+                        }}
+                      />
+                    );
+                  })}
+                  {/* Today column highlight */}
+                  {days.map((d, i) => {
+                    if (!sameDay(d, today)) return null;
+                    return (
+                      <div
+                        key={`today-${i}`}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          bottom: 0,
+                          left: `${(i / 10) * 100}%`,
+                          width: `${100 / 10}%`,
+                          background: "#f5f3ff",
+                          opacity: 0.5,
+                          zIndex: 0,
+                        }}
+                      />
+                    );
+                  })}
+
+                  {/* Bars */}
+                  {bars.map((bar) => {
+                    const startIdx = bar.startCol - 1;
+                    const endIdx = bar.endCol - 1;
+                    const leftPct = (startIdx / 10) * 100;
+                    const widthPct = ((endIdx - startIdx + 1) / 10) * 100;
+                    const top = bar.lane * 32;
+
+                    return (
+                      <a
+                        key={bar.task.id}
+                        href={`${JIRA}/${bar.task.key}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`${bar.task.key}\n${bar.task.title}\nProjeto: ${bar.project}\nEntrega: ${bar.task.dueDate}${bar.overdue ? "\n⚠️ ATRASADA" : ""}`}
+                        style={{
+                          position: "absolute",
+                          left: `calc(${leftPct}% + 4px)`,
+                          width: `calc(${widthPct}% - 8px)`,
+                          top: top + 8,
+                          height: 26,
+                          background: bar.overdue ? "#ef4444" : bar.color,
+                          color: "white",
+                          borderRadius: 999,
+                          padding: "0 12px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 11,
                           fontWeight: 600,
-                          color: overbooked ? "#dc2626" : totalH > effectiveDaily * 0.5 ? "#7c3aed" : "#d1d5db",
-                        }}>
-                          {fmtH(totalH)}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                          textDecoration: "none",
+                          overflow: "hidden",
+                          whiteSpace: "nowrap",
+                          textOverflow: "ellipsis",
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                          borderLeft: bar.startsBefore ? "3px solid rgba(255,255,255,0.6)" : "none",
+                          zIndex: 1,
+                        }}
+                      >
+                        {bar.startsBefore && <span style={{ opacity: 0.85, fontSize: 10 }}>←</span>}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {bar.task.title}
+                        </span>
+                      </a>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
@@ -363,21 +465,21 @@ export default function Dashboard() {
       {incoming.length > 0 && <IncomingPanel items={incoming} />}
 
       {/* Legend */}
-      <div style={{ marginTop: 14, display: "flex", gap: 14, fontSize: 10, color: "#9ca3af", flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <span style={{ display: "inline-block", padding: "1px 6px", borderRadius: 3, background: "#ede9fe", border: "1px solid #c4b5fd", fontSize: 9, color: "#7c3aed", fontWeight: 600 }}>📦 task</span>
-          = dia da entrega
+      <div style={{ marginTop: 14, display: "flex", gap: 14, fontSize: 11, color: "#9ca3af", flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 24, height: 8, borderRadius: 999, background: "#5b6cff" }} />
+          uma cor por projeto
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: "#fef2f2", border: "1px solid #fecaca" }} />
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 24, height: 8, borderRadius: 999, background: "#ef4444" }} />
           atrasada
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: "#fde68a", border: "1px solid #fbbf24" }} />
-          dia cheio
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 24, height: 8, borderRadius: 999, background: "#5b6cff", borderLeft: "3px solid rgba(255,255,255,0.6)" }} />
+          começou antes
         </span>
-        <span style={{ marginLeft: "auto", fontSize: 9 }}>
-          Equipe: 5h30/dia · Freelas (Edu, Larissa): +8h/dia
+        <span style={{ marginLeft: "auto", fontSize: 10 }}>
+          Tasks sem prazo não aparecem na timeline
         </span>
       </div>
 
@@ -509,4 +611,3 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
   );
 }
 
-const hCell: React.CSSProperties = { background: "#f9fafb", padding: "6px 4px", fontSize: 11, color: "#6b7280", textAlign: "center" };
