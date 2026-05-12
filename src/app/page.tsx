@@ -87,6 +87,7 @@ interface Bar {
   lane: number;         // 0, 1, 2…
   startsBefore: boolean; // task started before visible window
   overdue: boolean;
+  isDone: boolean;
   project: string;
   color: string;
 }
@@ -137,7 +138,13 @@ function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
   const lastDay = new Date(days[days.length - 1]); lastDay.setHours(0, 0, 0, 0);
 
   const candidates = tasks
-    .filter((t) => t.status !== "done" && t.dueDate)
+    .filter((t) => {
+      if (!t.dueDate) return false;
+      const due = new Date(t.dueDate); due.setHours(0, 0, 0, 0);
+      // Show done tasks only if they were due in the past (greyed out)
+      if (t.status === "done") return due.getTime() < nowMs;
+      return true;
+    })
     .map((task) => {
       const due = new Date(task.dueDate!); due.setHours(0, 0, 0, 0);
       const created = new Date(task.createdAt); created.setHours(0, 0, 0, 0);
@@ -169,7 +176,8 @@ function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
       if (endCol === -1) endCol = startCol;
       if (endCol < startCol) endCol = startCol;
 
-      const overdue = due.getTime() < nowMs;
+      const isDone = task.status === "done";
+      const overdue = !isDone && due.getTime() < nowMs;
       const project = extractProject(task.title);
       return {
         task,
@@ -178,12 +186,13 @@ function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
         lane: 0,
         startsBefore,
         overdue,
+        isDone,
         project,
         color: projectColor(project),
       } as Bar;
     })
     .filter((x): x is Bar => x !== null)
-    .sort((a, b) => a.startCol - b.startCol || (b.endCol - b.startCol) - (a.endCol - a.startCol));
+    .sort((a, b) => a.endCol - b.endCol || a.startCol - b.startCol);
 
   // Lane allocation: greedy first-fit
   const lanes: number[] = []; // for each lane: last occupied endCol
@@ -416,28 +425,52 @@ export default function Dashboard() {
                     const widthPct = ((endIdx - startIdx + 1) / 10) * 100;
                     const top = bar.lane * 32;
 
+                    const isWaiting = bar.task.status === "in_review";
+                    const barBg = bar.isDone
+                      ? "#9ca3af"
+                      : bar.overdue
+                      ? "#ef4444"
+                      : isWaiting
+                      ? "#fca5a5"
+                      : bar.color;
+                    const barLabel = bar.isDone
+                      ? `✅ ${bar.task.title}`
+                      : bar.overdue
+                      ? `⚠️ ${bar.task.title}`
+                      : isWaiting
+                      ? `⏳ ${bar.task.title}`
+                      : bar.task.title;
+                    const titleTip = bar.isDone
+                      ? `✅ Entregue · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
+                      : bar.overdue
+                      ? `⚠️ ATRASADA · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
+                      : isWaiting
+                      ? `🕐 Aguardando feedback · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`
+                      : `${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`;
+
                     return (
                       <a
                         key={bar.task.id}
                         href={`${JIRA}/${bar.task.key}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title={`${bar.task.key}\n${bar.task.title}\nProjeto: ${bar.project}\nEntrega: ${bar.task.dueDate}${bar.overdue ? "\n⚠️ ATRASADA" : ""}`}
+                        title={titleTip}
                         style={{
                           position: "absolute",
                           left: `calc(${leftPct}% + 4px)`,
                           width: `calc(${widthPct}% - 8px)`,
                           top: top + 8,
                           height: 26,
-                          background: bar.overdue ? "#ef4444" : bar.color,
-                          color: "white",
+                          background: barBg,
+                          color: isWaiting && !bar.isDone && !bar.overdue ? "#7f1d1d" : "white",
                           borderRadius: 999,
                           padding: "0 12px",
                           display: "flex",
                           alignItems: "center",
                           gap: 6,
                           fontSize: 11,
-                          fontWeight: 600,
+                          fontWeight: bar.isDone ? 400 : 600,
+                          opacity: bar.isDone ? 0.7 : 1,
                           textDecoration: "none",
                           overflow: "hidden",
                           whiteSpace: "nowrap",
@@ -449,7 +482,7 @@ export default function Dashboard() {
                       >
                         {bar.startsBefore && <span style={{ opacity: 0.85, fontSize: 10 }}>←</span>}
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {bar.task.title}
+                          {barLabel}
                         </span>
                       </a>
                     );

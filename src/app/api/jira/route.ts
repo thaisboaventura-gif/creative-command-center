@@ -18,7 +18,7 @@ interface JiraIssue {
   };
 }
 
-const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "lucas", "larissa"];
+const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "lucas", "larissa", "rafaela", "ceragioli"];
 
 function isTeamMember(displayName: string): boolean {
   const lower = displayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -114,6 +114,10 @@ export async function GET() {
       fetchAllIssues(base, auth, boardJql, 3),
       fetchAllIssues(base, auth, newJql, 1),
     ]);
+
+    // Log all unique assignees to debug
+    const allAssignees = [...new Set(boardIssues.map(i => i.fields?.assignee?.displayName).filter(Boolean))];
+    console.log("ALL ASSIGNEES IN JIRA:", JSON.stringify(allAssignees));
 
     // Filter to only the direct team
     const teamIssues = boardIssues.filter((issue) =>
