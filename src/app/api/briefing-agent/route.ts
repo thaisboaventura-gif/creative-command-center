@@ -433,7 +433,7 @@ Se o briefing incluir copy, verifique ANTES de aprovar:
 1. MENSAGEM: Cada peça tem uma mensagem clara e específica?
    Se mencionar "conceitos", "ângulos" ou "temas" sem descrever o que cada um diz:
    → needs_clarification=true
-   → comment: "O briefing menciona X conceitos mas não descreve nenhum. Qual é a mensagem principal de cada um? Uma frase por conceito."
+   → comment: "O briefing menciona X conceitos mas não descreve nenhum. Qual é a mensagem principal de cada um? Me dá pelo menos uma frase direcional por peça, por favor?"
 
 2. DADOS: Se mencionar números ou cases sem dizer em qual peça usar:
    → needs_clarification=true
@@ -457,6 +457,31 @@ Quantidade de informação não é qualidade de briefing.
 Se não dá pra escrever a headline agora com o que foi fornecido, falta informação.
 Máximo 3 perguntas. Diretas. Sem explicar o motivo de cada uma.
 Se houver múltiplas perguntas de copy, agrupe todas em um único "comment".
+
+REGRA — PEÇAS BÁSICAS DE BRAND DESIGN (não pedir dimensões):
+As peças abaixo têm dimensões padrão conhecidas — NUNCA pedir specs delas:
+
+| Peça                    | Dimensão padrão              |
+|-------------------------|------------------------------|
+| Header de e-mail        | 600×300px                    |
+| Footer de e-mail        | 600×100px                    |
+| In-app / slideout       | 600×600px                    |
+| Banner web fixo         | 600×120px ou 728×90px        |
+| Banner lateral          | 300×600px                    |
+| Assinatura de e-mail    | 600×150px                    |
+| Avatar / profile pic    | 400×400px                    |
+| Cover / capa            | 1584×396px                   |
+| Story highlight cover   | 1080×1920px (círculo 161px)  |
+
+LÓGICA DE VALIDAÇÃO DE SPECS:
+1. Separar as peças em dois grupos:
+   - Grupo A: peças da lista acima → dimensões já conhecidas, OK
+   - Grupo B: todas as outras peças (banners Meta, display, OOH, etc.)
+2. Validar specs APENAS do Grupo B
+3. Se Grupo B tiver peças sem dimensões:
+   → missing_specs=true, missing_specs_detail lista SÓ as peças do Grupo B sem specs
+4. Se todas as peças forem do Grupo A:
+   → missing_specs=false, não mencionar nada sobre dimensões
 
 CRIAÇÃO DE SUBTASKS (só quando briefing OK E needs_clarification=false):
 Identifique as subtasks necessárias com base no briefing.
