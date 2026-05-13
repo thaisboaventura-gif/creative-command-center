@@ -577,8 +577,10 @@ export async function POST(req: Request) {
     // Step 2 — detect presentation request
     if (isPresentation(summary, description)) {
       const msg =
-        "Apresentações: atualmente só revisamos copy e melhoramos visual. " +
-        "Precisamos da apresentação no template da Nuvemshop já com conteúdo completo.";
+        "Sim, podemos fazer revisão de apresentações e melhorias visuais!\n\n" +
+        "Para agilizar o processo, precisamos que o conteúdo já esteja estruturado em Google Slides. " +
+        "Assim conseguimos focar na parte visual e de brand design.\n\n" +
+        "Pode compartilhar o link do slide com o conteúdo? 😊";
       await postFriendlyComment(issueKey, reporterAccountId, msg);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
