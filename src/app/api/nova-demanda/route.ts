@@ -148,21 +148,29 @@ async function createJiraIssue(
     body: JSON.stringify({ fields: { ...baseFields, ...countryFields } }),
   });
 
-  // If Jira rejects due to invalid custom fields, retry without country
+  // Read body once — it can only be consumed once per response
+  let lastErrText = "";
+
   if (!res.ok) {
-    const errText = await res.text();
-    const hasFieldError = errText.includes("customfield") || errText.includes("field");
+    lastErrText = await res.text();
+    const hasFieldError = lastErrText.includes("customfield") || lastErrText.includes("field");
+
     if (hasFieldError) {
-      console.warn("[nova-demanda] Country fields rejected, retrying without:", errText.slice(0, 200));
+      // Retry without Country fields — res is reassigned to a fresh response
+      console.warn("[nova-demanda] Country fields rejected, retrying without:", lastErrText.slice(0, 200));
       res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ fields: baseFields }),
       });
+      // Read the new response's body if it also failed
+      if (!res.ok) {
+        lastErrText = await res.text();
+      }
     }
+
     if (!res.ok) {
-      const finalErr = await res.text();
-      console.error("[nova-demanda] Jira create failed:", res.status, finalErr);
+      console.error("[nova-demanda] Jira create failed:", res.status, lastErrText);
       return null;
     }
   }
