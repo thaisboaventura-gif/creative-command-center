@@ -58,7 +58,6 @@ const TEAM_RULES: Record<string, { assignee: string; accountHint: string }> = {
   desdobramento:       { assignee: "Rafa",    accountHint: "rafa" },
 };
 
-// Default hour estimates per type (used as fallback without Claude)
 const DEFAULT_HOURS: Record<string, number> = {
   anuncio_performance: 4,
   sinalizacao_evento:  4,
@@ -75,6 +74,9 @@ const CAPACITY: Record<string, number> = {
   larissa: 13.5,
   rafa:    8,
 };
+
+// Country custom field candidates for the BDSL project
+const COUNTRY_CANDIDATES = ["customfield_21359", "customfield_15854", "customfield_10670"];
 
 function countWorkDays(from: Date, to: Date): number {
   let count = 0;
@@ -104,7 +106,32 @@ async function findAccountId(base: string, auth: string, hint: string): Promise<
   }
 }
 
-const COUNTRY_CANDIDATES = ["customfield_21359", "customfield_15854", "customfield_10670"];
+// Tries each country candidate field individually via PUT until one sticks.
+// Called after every issue creation — never skipped.
+async function forceSetCountry(base: string, auth: string, issueKey: string): Promise<void> {
+  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
+  const headers = {
+    Authorization: `Basic ${auth}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+
+  for (const field of COUNTRY_CANDIDATES) {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ fields: { [field]: { value: "Brasil" } } }),
+    });
+    if (res.ok) {
+      console.log(`[nova-demanda] Country = Brasil set via ${field} on ${issueKey}`);
+      return;
+    }
+    const errText = await res.text();
+    console.warn(`[nova-demanda] ${field} rejected on ${issueKey}:`, errText.slice(0, 120));
+  }
+
+  console.error(`[nova-demanda] ⚠️ All country fields failed for ${issueKey} — issue exists but Country is unset`);
+}
 
 async function createJiraIssue(
   base: string,
@@ -123,11 +150,7 @@ async function createJiraIssue(
     "Content-Type": "application/json",
   };
 
-  const countryFields = Object.fromEntries(
-    COUNTRY_CANDIDATES.map((f) => [f, { value: "Brasil" }])
-  );
-
-  const baseFields: Record<string, unknown> = {
+  const fields: Record<string, unknown> = {
     project: { key: project },
     summary,
     description: {
@@ -141,60 +164,19 @@ async function createJiraIssue(
     ...(parentKey ? { parent: { key: parentKey } } : {}),
   };
 
-  // First attempt: with Country fields
-  let res = await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ fields: { ...baseFields, ...countryFields } }),
+    body: JSON.stringify({ fields }),
   });
 
-  // Read body once — it can only be consumed once per response
-  let lastErrText = "";
-
   if (!res.ok) {
-    lastErrText = await res.text();
-    const hasFieldError = lastErrText.includes("customfield") || lastErrText.includes("field");
-
-    if (hasFieldError) {
-      // Retry without Country fields — res is reassigned to a fresh response
-      console.warn("[nova-demanda] Country fields rejected, retrying without:", lastErrText.slice(0, 200));
-      res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ fields: baseFields }),
-      });
-      // Read the new response's body if it also failed
-      if (!res.ok) {
-        lastErrText = await res.text();
-      }
-    }
-
-    if (!res.ok) {
-      console.error("[nova-demanda] Jira create failed:", res.status, lastErrText);
-      return null;
-    }
+    const errText = await res.text();
+    console.error("[nova-demanda] Jira create failed:", res.status, errText);
+    return null;
   }
 
   return res.json();
-}
-
-async function addJiraComment(base: string, auth: string, issueKey: string, comment: string): Promise<boolean> {
-  const res = await fetch(`${base}/rest/api/3/issue/${issueKey}/comment`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      body: {
-        type: "doc",
-        version: 1,
-        content: [{ type: "paragraph", content: [{ type: "text", text: comment }] }],
-      },
-    }),
-  });
-  return res.ok;
 }
 
 async function callClaude(systemPrompt: string, userPrompt: string): Promise<string> {
@@ -224,7 +206,6 @@ async function callClaude(systemPrompt: string, userPrompt: string): Promise<str
   return data.content?.[0]?.text || "";
 }
 
-// Ask Claude to estimate hours per tipo given the full briefing
 async function estimatePerTipo(
   titulo: string,
   descricao: string,
@@ -273,7 +254,7 @@ export async function POST(req: Request) {
     const project = PROJECT();
     const baseUrl = base.replace(/\/$/, "");
 
-    // Get Claude's hour estimates for all selected types at once
+    // Claude estimates hours for all types at once
     const claudeEstimates = await estimatePerTipo(titulo, descricao, tipos);
 
     // Build subtask definitions (rule-based assignee, Claude-estimated hours)
@@ -294,7 +275,7 @@ export async function POST(req: Request) {
     const totalHours = subtaskDefs.reduce((s, d) => s + d.estimatedHours, 0);
     const tiposStr = tipos.join(", ");
 
-    // Create parent task (no specific assignee — subtasks carry the assignment)
+    // Build parent task description
     const fullDesc = [
       quemSolicitou ? `Solicitante: ${quemSolicitou}` : null,
       `Tipos: ${tiposStr}`,
@@ -306,10 +287,16 @@ export async function POST(req: Request) {
       .filter(Boolean)
       .join("\n");
 
+    // Create parent task
     const parentIssue = await createJiraIssue(base, auth, project, titulo, fullDesc, prazo, null);
     const issueKey = parentIssue?.key || null;
 
-    // Derive browse URL from Jira's own "self" field — more reliable than JIRA_BASE_URL
+    // Force-set Country = Brasil on parent (tries each candidate field until one works)
+    if (issueKey) {
+      await forceSetCountry(base, auth, issueKey);
+    }
+
+    // Derive browse URL from Jira's own "self" field — reliable regardless of env var format
     const jiraBase = parentIssue?.self
       ? parentIssue.self.split("/rest/")[0]
       : baseUrl;
@@ -320,55 +307,38 @@ export async function POST(req: Request) {
       subtaskDefs.map((d) => findAccountId(base, auth, d.accountHint))
     );
 
-    // Create subtasks in parallel
-    const subtaskResults: SubtaskResult[] = await Promise.all(
-      subtaskDefs.map(async (def, i) => {
-        const accountId = accountIds[i];
-        const stSummary = `${titulo} | ${def.label}`;
-        let stKey: string | null = null;
+    // Create subtasks sequentially (Jira can be flaky with rapid parallel subtask creation)
+    const subtaskResults: SubtaskResult[] = [];
+    for (let i = 0; i < subtaskDefs.length; i++) {
+      const def = subtaskDefs[i];
+      const accountId = accountIds[i];
+      const stSummary = `${titulo} | ${def.label}`;
+      let stKey: string | null = null;
 
-        if (issueKey) {
-          const st = await createJiraIssue(
-            base, auth, project,
-            stSummary,
-            `Subtask de ${def.tipo} — estimativa: ${def.estimatedHours}h`,
-            prazo,
-            accountId,
-            issueKey   // parentKey → creates as Subtask
-          );
-          stKey = st?.key || null;
+      if (issueKey) {
+        const st = await createJiraIssue(
+          base, auth, project,
+          stSummary,
+          `Subtask de ${def.tipo} — estimativa: ${def.estimatedHours}h`,
+          prazo,
+          accountId,
+          issueKey
+        );
+        stKey = st?.key || null;
+
+        // Force-set Country = Brasil on each subtask as well
+        if (stKey) {
+          await forceSetCountry(base, auth, stKey);
         }
-
-        return {
-          tipo: def.tipo,
-          label: def.label,
-          assignee: def.assignee,
-          estimatedHours: def.estimatedHours,
-          key: stKey,
-        };
-      })
-    );
-
-    // If Copy is one of the types, generate a draft and post as comment on parent
-    const hasCopy = tipos.some((t) => TIPO_MAP[t] === "copy");
-    if (hasCopy && issueKey) {
-      try {
-        const copySystem = "Você é copywriter sênior de marca da Nuvemshop. Escreva em português brasileiro, tom profissional e criativo.";
-        const copyPrompt = `Gere uma proposta de copy criativa em português para o seguinte briefing. Seja conciso e entregue texto pronto para revisão.
-
-Título: ${titulo}
-Descrição: ${descricao}
-${apoio ? `Referência: ${apoio}` : ""}
-
-Responda apenas com o texto da copy, sem explicações.`;
-
-        const copyText = await callClaude(copySystem, copyPrompt);
-        if (copyText) {
-          await addJiraComment(base, auth, issueKey, `💡 Proposta de copy (gerada por IA):\n\n${copyText}`);
-        }
-      } catch (err) {
-        console.error("[nova-demanda] Copy generation failed:", err);
       }
+
+      subtaskResults.push({
+        tipo: def.tipo,
+        label: def.label,
+        assignee: def.assignee,
+        estimatedHours: def.estimatedHours,
+        key: stKey,
+      });
     }
 
     // Alerts
