@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { estimateHours } from "@/lib/estimate";
 import { sendSlackAlert } from "@/lib/slack";
 
 export const dynamic = "force-dynamic";
@@ -14,37 +13,67 @@ const PROJECT = () => process.env.JIRA_PROJECT_KEY?.trim() || "BDSL";
 
 interface DemandaBody {
   titulo: string;
-  tipo: string;
+  tipos: string[];
   descricao: string;
   prazo: string;
   solicitante: string;
+  quemSolicitou?: string;
   apoio?: string;
 }
 
+export interface SubtaskResult {
+  tipo: string;
+  label: string;
+  assignee: string;
+  estimatedHours: number;
+  key: string | null;
+}
+
+// Maps UI label → internal key
+const TIPO_MAP: Record<string, string> = {
+  "Anúncio/Performance":     "anuncio_performance",
+  "Sinalização/Evento":      "sinalizacao_evento",
+  "Motion/Vídeo":            "motion_video",
+  "Copy":                    "copy",
+  "Produto/Demo":            "produto_demo",
+  "Desdobramento/Adaptação": "desdobramento",
+};
+
+// Maps internal key → subtask label shown in Jira
+const SUBTASK_LABEL: Record<string, string> = {
+  anuncio_performance: "LAYOUT ESTÁTICOS",
+  sinalizacao_evento:  "SINALIZAÇÃO",
+  motion_video:        "MOTION",
+  copy:                "COPY",
+  produto_demo:        "PRODUTO/DEMO",
+  desdobramento:       "DESDOBRAMENTO",
+};
+
 const TEAM_RULES: Record<string, { assignee: string; accountHint: string }> = {
-  "anuncio_performance": { assignee: "Eduardo", accountHint: "eduardo" },
-  "sinalizacao_evento":  { assignee: "João",    accountHint: "joao" },
-  "motion_video":        { assignee: "Larissa", accountHint: "larissa" },
-  "copy":                { assignee: "Beatriz", accountHint: "beatriz" },
-  "produto_demo":        { assignee: "João",    accountHint: "joao" },
-  "desdobramento":       { assignee: "Rafa",    accountHint: "rafa" },
+  anuncio_performance: { assignee: "Eduardo", accountHint: "eduardo" },
+  sinalizacao_evento:  { assignee: "João",    accountHint: "joao" },
+  motion_video:        { assignee: "Larissa", accountHint: "larissa" },
+  copy:                { assignee: "Beatriz", accountHint: "beatriz" },
+  produto_demo:        { assignee: "João",    accountHint: "joao" },
+  desdobramento:       { assignee: "Rafa",    accountHint: "rafa" },
+};
+
+// Default hour estimates per type (used as fallback without Claude)
+const DEFAULT_HOURS: Record<string, number> = {
+  anuncio_performance: 4,
+  sinalizacao_evento:  4,
+  motion_video:        6,
+  copy:                2,
+  produto_demo:        3,
+  desdobramento:       2,
 };
 
 const CAPACITY: Record<string, number> = {
   eduardo: 13.5,
-  joao: 5.5,
+  joao:    5.5,
   beatriz: 5.5,
   larissa: 13.5,
-  rafa: 8,
-};
-
-const TIPO_MAP: Record<string, string> = {
-  "Anúncio/Performance":      "anuncio_performance",
-  "Sinalização/Evento":       "sinalizacao_evento",
-  "Motion/Vídeo":             "motion_video",
-  "Copy":                     "copy",
-  "Produto/Demo":             "produto_demo",
-  "Desdobramento/Adaptação":  "desdobramento",
+  rafa:    8,
 };
 
 function countWorkDays(from: Date, to: Date): number {
@@ -75,6 +104,8 @@ async function findAccountId(base: string, auth: string, hint: string): Promise<
   }
 }
 
+const COUNTRY_CANDIDATES = ["customfield_21359", "customfield_15854", "customfield_10670"];
+
 async function createJiraIssue(
   base: string,
   auth: string,
@@ -82,38 +113,60 @@ async function createJiraIssue(
   summary: string,
   description: string,
   duedate: string,
-  accountId: string | null
-): Promise<{ key: string } | null> {
-  const body: Record<string, unknown> = {
-    fields: {
-      project: { key: project },
-      summary,
-      description: {
-        type: "doc",
-        version: 1,
-        content: [{ type: "paragraph", content: [{ type: "text", text: description }] }],
-      },
-      issuetype: { name: "Task" },
-      duedate: duedate || undefined,
-      ...(accountId ? { assignee: { accountId } } : {}),
-    },
+  accountId: string | null,
+  parentKey?: string
+): Promise<{ key: string; self?: string } | null> {
+  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue`;
+  const headers = {
+    Authorization: `Basic ${auth}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
   };
 
-  const res = await fetch(`${base}/rest/api/3/issue`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
+  const countryFields = Object.fromEntries(
+    COUNTRY_CANDIDATES.map((f) => [f, { value: "Brasil" }])
+  );
+
+  const baseFields: Record<string, unknown> = {
+    project: { key: project },
+    summary,
+    description: {
+      type: "doc",
+      version: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: description }] }],
     },
-    body: JSON.stringify(body),
+    issuetype: parentKey ? { name: "Subtask" } : { name: "Task" },
+    ...(duedate ? { duedate } : {}),
+    ...(accountId ? { assignee: { accountId } } : {}),
+    ...(parentKey ? { parent: { key: parentKey } } : {}),
+  };
+
+  // First attempt: with Country fields
+  let res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ fields: { ...baseFields, ...countryFields } }),
   });
 
+  // If Jira rejects due to invalid custom fields, retry without country
   if (!res.ok) {
     const errText = await res.text();
-    console.error("Jira create failed:", res.status, errText);
-    return null;
+    const hasFieldError = errText.includes("customfield") || errText.includes("field");
+    if (hasFieldError) {
+      console.warn("[nova-demanda] Country fields rejected, retrying without:", errText.slice(0, 200));
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fields: baseFields }),
+      });
+    }
+    if (!res.ok) {
+      const finalErr = await res.text();
+      console.error("[nova-demanda] Jira create failed:", res.status, finalErr);
+      return null;
+    }
   }
+
   return res.json();
 }
 
@@ -149,7 +202,7 @@ async function callClaude(systemPrompt: string, userPrompt: string): Promise<str
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
+      max_tokens: 512,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     }),
@@ -163,90 +216,81 @@ async function callClaude(systemPrompt: string, userPrompt: string): Promise<str
   return data.content?.[0]?.text || "";
 }
 
+// Ask Claude to estimate hours per tipo given the full briefing
+async function estimatePerTipo(
+  titulo: string,
+  descricao: string,
+  tipos: string[]
+): Promise<Record<string, number>> {
+  const tipoList = tipos.map((t) => `- ${t}`).join("\n");
+  const system = `Você estima horas de trabalho para o time de Brand Creative.
+
+REGRAS DE ESTIMATIVA:
+- Layout estático (post, banner, card): 2h cada
+- Copy post: 45min por peça
+- Copy LP / email: 2h
+- Motion 30s: 4h
+- Edição de vídeo: 4h por vídeo
+- Sinalização/evento: 4h
+- Produto/demo: 3h
+- Desdobramento/adaptação: 2h por peça
+- Default: 2h
+
+Responda APENAS com JSON: { "Tipo": horas, ... }
+Use exatamente os nomes de tipo fornecidos como chaves.`;
+
+  const user = `Título: ${titulo}\nDescrição: ${descricao}\n\nTipos selecionados:\n${tipoList}\n\nEstime horas para cada tipo.`;
+
+  try {
+    const raw = await callClaude(system, user);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+  } catch (err) {
+    console.warn("[nova-demanda] Claude estimate failed, using defaults:", err);
+  }
+  return {};
+}
+
 export async function POST(req: Request) {
   try {
     const body: DemandaBody = await req.json();
-    const { titulo, tipo, descricao, prazo, solicitante, apoio } = body;
+    const { titulo, tipos, descricao, prazo, solicitante, quemSolicitou, apoio } = body;
 
-    if (!titulo || !tipo || !descricao || !prazo || !solicitante) {
+    if (!titulo || !tipos?.length || !descricao || !prazo || !solicitante) {
       return NextResponse.json({ error: "Campos obrigatórios faltando" }, { status: 400 });
     }
 
     const base = JIRA_BASE();
     const auth = JIRA_AUTH();
     const project = PROJECT();
-    const tipoKey = TIPO_MAP[tipo] || "";
-    const rule = TEAM_RULES[tipoKey];
-    const est = estimateHours(titulo, null);
+    const baseUrl = base.replace(/\/$/, "");
 
-    const systemPrompt = `Você é a IA de distribuição de tarefas do time de Brand Creative da Nuvemshop.
+    // Get Claude's hour estimates for all selected types at once
+    const claudeEstimates = await estimatePerTipo(titulo, descricao, tipos);
 
-REGRAS DO TIME:
-- Eduardo → performance, growth, anúncios (tem freela design junto, capacidade 13h30/dia)
-- João → sinalização, eventos, stands, product marketing, demos de produto (5h30/dia)
-- Beatriz → todo job de copy (5h30/dia)
-- Larissa → todo job de motion e vídeo (tem freela motion junto, capacidade 13h30/dia)
-- Rafa (agência Monstra) → desdobramentos, adaptações, peças fáceis (8h/dia)
-- Francisco → ignorar, sem tasks
-- Lucas → ignorar, está saindo
+    // Build subtask definitions (rule-based assignee, Claude-estimated hours)
+    const subtaskDefs = tipos.map((tipo) => {
+      const tipoKey = TIPO_MAP[tipo] || "";
+      const rule = TEAM_RULES[tipoKey];
+      const estimatedHours = claudeEstimates[tipo] ?? DEFAULT_HOURS[tipoKey] ?? 2;
+      return {
+        tipo,
+        tipoKey,
+        label: SUBTASK_LABEL[tipoKey] || tipo.toUpperCase(),
+        assignee: rule?.assignee || "Eduardo",
+        accountHint: rule?.accountHint || "eduardo",
+        estimatedHours,
+      };
+    });
 
-REGRAS DE ESTIMATIVA (horas):
-- Layout estático (post, banner, card): 2h cada
-- Copy post: 45min cada
-- Copy LP: 2h
-- Motion 30s: 4h
-- Roteiro 30s: 2h
-- Storyboard: 4h
-- Edição vídeo: 4h
-- Vídeo produção completa: 24h
-- Banner: 1h
-- Email/newsletter: 1h30
-- Apresentação/deck: 3h
-- Template: 2h
-- Default: 2h
+    const totalHours = subtaskDefs.reduce((s, d) => s + d.estimatedHours, 0);
+    const tiposStr = tipos.join(", ");
 
-Responda SEMPRE em JSON com esta estrutura:
-{
-  "assignee": "nome da pessoa",
-  "estimatedHours": número,
-  "reasoning": "explicação curta de por quê essa pessoa"
-}`;
-
-    const userPrompt = `Novo job recebido:
-- Título: ${titulo}
-- Tipo: ${tipo}
-- Descrição: ${descricao}
-- Prazo: ${prazo}
-- Solicitante: ${solicitante}
-${apoio ? `- Material de apoio: ${apoio}` : ""}
-
-Quem deve pegar e quanto tempo leva?`;
-
-    let assigneeName = rule?.assignee || "Eduardo";
-    let estimatedH = est.hours;
-    let reasoning = "Regra padrão por tipo";
-
-    try {
-      const claudeResponse = await callClaude(systemPrompt, userPrompt);
-      const jsonMatch = claudeResponse.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.assignee) assigneeName = parsed.assignee;
-        if (parsed.estimatedHours) estimatedH = parsed.estimatedHours;
-        if (parsed.reasoning) reasoning = parsed.reasoning;
-      }
-    } catch (err) {
-      console.error("Claude fallback to rules:", err);
-    }
-
-    const accountHint = assigneeName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ")[0];
-    const accountId = await findAccountId(base, auth, accountHint);
-
+    // Create parent task (no specific assignee — subtasks carry the assignment)
     const fullDesc = [
-      `Solicitante: ${solicitante}`,
-      `Tipo: ${tipo}`,
-      `Estimativa: ${estimatedH}h`,
-      `Atribuído para: ${assigneeName} (${reasoning})`,
+      quemSolicitou ? `Solicitante: ${quemSolicitou}` : null,
+      `Tipos: ${tiposStr}`,
+      `Estimativa total: ${totalHours}h`,
       apoio ? `Material de apoio: ${apoio}` : "",
       "",
       descricao,
@@ -254,12 +298,54 @@ Quem deve pegar e quanto tempo leva?`;
       .filter(Boolean)
       .join("\n");
 
-    const issue = await createJiraIssue(base, auth, project, titulo, fullDesc, prazo, accountId);
-    const issueKey = issue?.key || null;
-    const jiraLink = issueKey ? `${base}/browse/${issueKey}` : "não criada";
+    const parentIssue = await createJiraIssue(base, auth, project, titulo, fullDesc, prazo, null);
+    const issueKey = parentIssue?.key || null;
 
-    if (issueKey && tipoKey === "copy") {
+    // Derive browse URL from Jira's own "self" field — more reliable than JIRA_BASE_URL
+    const jiraBase = parentIssue?.self
+      ? parentIssue.self.split("/rest/")[0]
+      : baseUrl;
+    const jiraLink = issueKey ? `${jiraBase}/browse/${issueKey}` : null;
+
+    // Look up all accountIds in parallel
+    const accountIds = await Promise.all(
+      subtaskDefs.map((d) => findAccountId(base, auth, d.accountHint))
+    );
+
+    // Create subtasks in parallel
+    const subtaskResults: SubtaskResult[] = await Promise.all(
+      subtaskDefs.map(async (def, i) => {
+        const accountId = accountIds[i];
+        const stSummary = `${titulo} | ${def.label}`;
+        let stKey: string | null = null;
+
+        if (issueKey) {
+          const st = await createJiraIssue(
+            base, auth, project,
+            stSummary,
+            `Subtask de ${def.tipo} — estimativa: ${def.estimatedHours}h`,
+            prazo,
+            accountId,
+            issueKey   // parentKey → creates as Subtask
+          );
+          stKey = st?.key || null;
+        }
+
+        return {
+          tipo: def.tipo,
+          label: def.label,
+          assignee: def.assignee,
+          estimatedHours: def.estimatedHours,
+          key: stKey,
+        };
+      })
+    );
+
+    // If Copy is one of the types, generate a draft and post as comment on parent
+    const hasCopy = tipos.some((t) => TIPO_MAP[t] === "copy");
+    if (hasCopy && issueKey) {
       try {
+        const copySystem = "Você é copywriter sênior de marca da Nuvemshop. Escreva em português brasileiro, tom profissional e criativo.";
         const copyPrompt = `Gere uma proposta de copy criativa em português para o seguinte briefing. Seja conciso e entregue texto pronto para revisão.
 
 Título: ${titulo}
@@ -268,59 +354,58 @@ ${apoio ? `Referência: ${apoio}` : ""}
 
 Responda apenas com o texto da copy, sem explicações.`;
 
-        const copyText = await callClaude(
-          "Você é copywriter sênior de marca da Nuvemshop. Escreva em português brasileiro, tom profissional e criativo.",
-          copyPrompt
-        );
-        if (copyText && issueKey) {
+        const copyText = await callClaude(copySystem, copyPrompt);
+        if (copyText) {
           await addJiraComment(base, auth, issueKey, `💡 Proposta de copy (gerada por IA):\n\n${copyText}`);
         }
       } catch (err) {
-        console.error("Copy generation failed:", err);
+        console.error("[nova-demanda] Copy generation failed:", err);
       }
     }
 
+    // Alerts
     const alerts: string[] = [];
     const workDays = countWorkDays(new Date(), new Date(prazo));
-    const dailyCap = CAPACITY[accountHint] || 5.5;
 
-    if (estimatedH > 8 && workDays < 2) {
-      alerts.push(`⚠️ *Prazo impossível*: ${estimatedH}h estimadas mas só ${workDays} dia(s) útil(eis) até ${prazo}`);
+    if (totalHours > 8 && workDays < 2) {
+      alerts.push(`⚠️ *Prazo apertado*: ${totalHours}h estimadas no total, mas só ${workDays} dia(s) útil(eis) até ${prazo}`);
     }
-    if (estimatedH > 6) {
-      alerts.push(`📊 *Volume alto*: ${estimatedH}h estimadas para este job`);
-    }
-    if (!tipoKey) {
-      alerts.push(`❓ *Job não classificado*: tipo "${tipo}" não mapeado automaticamente`);
+
+    const overloaded = subtaskDefs.filter((d) => {
+      const cap = CAPACITY[d.accountHint] || 5.5;
+      return d.estimatedHours > cap * workDays * 0.8;
+    });
+    for (const d of overloaded) {
+      alerts.push(`📊 *Volume alto para ${d.assignee}*: ${d.estimatedHours}h estimadas (${d.tipo})`);
     }
 
     if (alerts.length > 0) {
-      const slackMsg = [
+      const subtaskLines = subtaskResults
+        .map((s) => `  • ${s.label} → ${s.assignee} (${s.estimatedHours}h)`)
+        .join("\n");
+
+      await sendSlackAlert([
         `🚨 *Alerta — Nova demanda: ${titulo}*`,
         `Solicitante: ${solicitante}`,
-        `Prazo: ${prazo}`,
-        `Atribuído: ${assigneeName} (${estimatedH}h)`,
+        `Prazo: ${prazo} (${workDays} dias úteis)`,
+        `Subtasks:\n${subtaskLines}`,
         "",
         ...alerts,
         "",
         `🔗 ${jiraLink}`,
-      ].join("\n");
-
-      await sendSlackAlert(slackMsg);
+      ].join("\n"));
     }
 
     return NextResponse.json({
       success: true,
       issueKey,
       jiraLink,
-      assignee: assigneeName,
-      estimatedHours: estimatedH,
-      reasoning,
+      subtasks: subtaskResults,
       alerts,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error("Nova demanda error:", msg);
+    console.error("[nova-demanda]", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

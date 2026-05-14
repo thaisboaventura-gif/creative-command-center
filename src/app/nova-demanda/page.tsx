@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { SubtaskResult } from "@/app/api/nova-demanda/route";
 
 const TIPOS = [
   "Anúncio/Performance",
@@ -13,25 +14,33 @@ const TIPOS = [
 
 type Status = "idle" | "loading" | "success" | "error";
 
+interface Result {
+  issueKey: string;
+  jiraLink: string | null;
+  subtasks: SubtaskResult[];
+  alerts: string[];
+}
+
 export default function NovaDemanda() {
   const [titulo, setTitulo] = useState("");
-  const [tipo, setTipo] = useState("");
+  const [tipos, setTipos] = useState<string[]>([]);
   const [descricao, setDescricao] = useState("");
   const [prazo, setPrazo] = useState("");
   const [solicitante, setSolicitante] = useState("");
+  const [quemSolicitou, setQuemSolicitou] = useState("");
   const [apoio, setApoio] = useState("");
   const [status, setStatus] = useState<Status>("idle");
-  const [result, setResult] = useState<{
-    issueKey: string;
-    jiraLink: string;
-    assignee: string;
-    estimatedHours: number;
-    reasoning: string;
-    alerts: string[];
-  } | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const canSubmit = titulo && tipo && descricao && prazo && solicitante && status !== "loading";
+  function toggleTipo(t: string) {
+    setTipos((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]
+    );
+  }
+
+  const canSubmit =
+    titulo && tipos.length > 0 && descricao && prazo && solicitante && status !== "loading";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,7 +54,7 @@ export default function NovaDemanda() {
       const res = await fetch("/api/nova-demanda", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ titulo, tipo, descricao, prazo, solicitante, apoio: apoio || undefined }),
+        body: JSON.stringify({ titulo, tipos, descricao, prazo, solicitante, quemSolicitou: quemSolicitou || undefined, apoio: apoio || undefined }),
       });
 
       const data = await res.json();
@@ -75,15 +84,30 @@ export default function NovaDemanda() {
               <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>{result.issueKey}</p>
             </div>
 
+            {/* Subtasks table */}
             <div style={{ background: "#f9fafb", borderRadius: 8, padding: 16, marginBottom: 16 }}>
-              <Row label="Atribuído para" value={result.assignee} />
-              <Row label="Estimativa" value={`${result.estimatedHours}h`} />
-              <Row label="Motivo" value={result.reasoning} />
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                Subtasks criadas
+              </div>
+              {result.subtasks.map((st, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < result.subtasks.length - 1 ? "1px solid #e5e7eb" : "none", fontSize: 13 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 600, color: "#111" }}>{st.label}</span>
+                    {st.key && (
+                      <span style={{ fontSize: 11, color: "#9ca3af" }}>{st.key}</span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, color: "#374151" }}>
+                    <span>{st.assignee}</span>
+                    <span style={{ color: "#9ca3af" }}>{st.estimatedHours}h</span>
+                  </div>
+                </div>
+              ))}
             </div>
 
             {result.alerts.length > 0 && (
               <div style={{ background: "#fffbeb", borderRadius: 8, padding: 12, marginBottom: 16, border: "1px solid #fde68a" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#92400e", marginBottom: 6 }}>Alertas enviados ao Slack</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#92400e", marginBottom: 6 }}>Alertas</div>
                 {result.alerts.map((a, i) => (
                   <div key={i} style={{ fontSize: 12, color: "#78350f", marginBottom: 2 }}>{a}</div>
                 ))}
@@ -91,12 +115,14 @@ export default function NovaDemanda() {
             )}
 
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <a href={result.jiraLink} target="_blank" rel="noopener noreferrer"
-                style={{ flex: 1, display: "block", textAlign: "center", padding: "10px 16px", borderRadius: 8, background: "#7c3aed", color: "white", textDecoration: "none", fontSize: 13, fontWeight: 600 }}>
-                Ver no Jira
-              </a>
+              {result.jiraLink && (
+                <a href={result.jiraLink} target="_blank" rel="noopener noreferrer"
+                  style={{ flex: 1, display: "block", textAlign: "center", padding: "10px 16px", borderRadius: 8, background: "#7c3aed", color: "white", textDecoration: "none", fontSize: 13, fontWeight: 600 }}>
+                  Ver no Jira
+                </a>
+              )}
               <a href="/"
-                style={{ flex: 1, display: "block", textAlign: "center", padding: "10px 16px", borderRadius: 8, background: "white", color: "#374151", textDecoration: "none", fontSize: 13, fontWeight: 600, border: "1px solid #e5e7eb" }}>
+                style={{ flex: result.jiraLink ? 1 : undefined, display: "block", textAlign: "center", padding: "10px 16px", borderRadius: 8, background: "white", color: "#374151", textDecoration: "none", fontSize: 13, fontWeight: 600, border: "1px solid #e5e7eb" }}>
                 Voltar ao painel
               </a>
             </div>
@@ -127,20 +153,30 @@ export default function NovaDemanda() {
                 style={inputStyle} />
             </Field>
 
-            <Field label="Tipo" required>
+            <Field label="Tipo" required hint="Pode selecionar mais de um">
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {TIPOS.map((t) => (
-                  <button key={t} type="button" onClick={() => setTipo(t)}
-                    style={{
-                      padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer",
-                      border: tipo === t ? "2px solid #7c3aed" : "1px solid #e5e7eb",
-                      background: tipo === t ? "#ede9fe" : "white",
-                      color: tipo === t ? "#7c3aed" : "#374151",
-                    }}>
-                    {t}
-                  </button>
-                ))}
+                {TIPOS.map((t) => {
+                  const selected = tipos.includes(t);
+                  return (
+                    <button key={t} type="button" onClick={() => toggleTipo(t)}
+                      style={{
+                        padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer",
+                        border: selected ? "2px solid #7c3aed" : "1px solid #e5e7eb",
+                        background: selected ? "#ede9fe" : "white",
+                        color: selected ? "#7c3aed" : "#374151",
+                        transition: "all 0.1s",
+                      }}>
+                      {selected && <span style={{ marginRight: 4 }}>✓</span>}
+                      {t}
+                    </button>
+                  );
+                })}
               </div>
+              {tipos.length > 1 && (
+                <p style={{ margin: "6px 0 0", fontSize: 11, color: "#7c3aed" }}>
+                  {tipos.length} tipos selecionados — será criada 1 subtask por tipo
+                </p>
+              )}
             </Field>
 
             <Field label="Descrição" required>
@@ -159,6 +195,12 @@ export default function NovaDemanda() {
                   placeholder="Seu nome" style={inputStyle} />
               </Field>
             </div>
+
+            <Field label="Quem solicitou?" hint="Opcional — nome de quem pediu a demanda">
+              <input type="text" value={quemSolicitou} onChange={(e) => setQuemSolicitou(e.target.value)}
+                placeholder="Nome da pessoa que pediu essa demanda"
+                style={inputStyle} />
+            </Field>
 
             <Field label="Material de apoio" hint="Opcional — link do drive, Figma, doc, etc.">
               <input type="text" value={apoio} onChange={(e) => setApoio(e.target.value)}
@@ -180,7 +222,11 @@ export default function NovaDemanda() {
               color: canSubmit ? "white" : "#9ca3af",
               transition: "all 0.15s",
             }}>
-            {status === "loading" ? "Criando task e consultando IA..." : "Criar demanda"}
+            {status === "loading"
+              ? "Criando task e subtasks..."
+              : tipos.length > 1
+                ? `Criar demanda com ${tipos.length} subtasks`
+                : "Criar demanda"}
           </button>
         </form>
       </div>
@@ -205,15 +251,6 @@ function Field({ label, hint, required, children }: { label: string; hint?: stri
       </div>
       {children}
     </label>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 }}>
-      <span style={{ color: "#6b7280" }}>{label}</span>
-      <span style={{ color: "#111", fontWeight: 500 }}>{value}</span>
-    </div>
   );
 }
 

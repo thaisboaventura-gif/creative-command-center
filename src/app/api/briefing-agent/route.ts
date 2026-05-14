@@ -154,6 +154,16 @@ function buildFriendlyADF(
     content: [{ type: "text", text: "Qualquer dúvida, é só chamar! 😊" }],
   });
 
+  // AI disclaimer
+  nodes.push({
+    type: "paragraph",
+    content: [{ type: "text", text: "---" }],
+  });
+  nodes.push({
+    type: "paragraph",
+    content: [{ type: "text", text: "📌 Esta mensagem foi gerada por um agente de IA. Precisamos de todas essas informações para abrir o briefing e distribuir as subtasks corretamente. Obrigada! 😊" }],
+  });
+
   return nodes;
 }
 
@@ -559,6 +569,17 @@ export async function POST(req: Request) {
 
     const issueKey = issue.key as string;
     const fields = issue.fields as Record<string, unknown>;
+
+    // Country filter — only process Brasil tickets
+    const COUNTRY_FIELDS_AGENT = ["customfield_21359", "customfield_15854", "customfield_10670"];
+    const hasAnyCountry = COUNTRY_FIELDS_AGENT.some((f) => fields[f]);
+    if (hasAnyCountry) {
+      const countryStr = COUNTRY_FIELDS_AGENT.map((f) => JSON.stringify(fields[f] ?? "").toLowerCase()).join(" ");
+      const isBrasil = countryStr.includes("brasil") || countryStr.includes("brazil");
+      if (!isBrasil) {
+        return NextResponse.json({ skipped: "country", issueKey, country: countryStr.slice(0, 100) });
+      }
+    }
     const project = (process.env.JIRA_PROJECT_KEY?.trim() || "BDSL");
     const reporter = fields.reporter as { displayName?: string; emailAddress?: string; accountId?: string } | null;
 
@@ -708,7 +729,8 @@ export async function POST(req: Request) {
             `⚠️ Atenção @thais.boaventura: ${firstName} está com a pauta cheia nesse período (${pct}% da capacidade). ` +
             `Esse job pode ser candidato para a Monstra (rafaela.ceragioli). ` +
             `Tipos de job que a Monstra já executou: animações, edição de vídeo, artes de campanha, ` +
-            `material rico, templates, peças para eventos, adaptações e desdobramentos.`;
+            `material rico, templates, peças para eventos, adaptações e desdobramentos.\n\n` +
+            `---\n📌 Esta mensagem foi gerada por um agente de IA. Precisamos de todas essas informações para abrir o briefing e distribuir as subtasks corretamente. Obrigada! 😊`;
 
           await postJiraComment(issueKey, monstraComment);
           await sendSlackAlert(
