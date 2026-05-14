@@ -535,6 +535,11 @@ Regras para "comment":
 
 export async function POST(req: Request) {
   try {
+    // Kill switch — pause agent via environment variable
+    if (process.env.AGENT_PAUSED === "true") {
+      return NextResponse.json({ paused: true, message: "Agent is paused" });
+    }
+
     const payload = await req.json();
 
     // Support both issue_created and comment_created webhook events
