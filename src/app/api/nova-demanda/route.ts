@@ -75,8 +75,10 @@ const CAPACITY: Record<string, number> = {
   rafa:    8,
 };
 
-// Country custom field candidates for the BDSL project
-const COUNTRY_CANDIDATES = ["customfield_21359", "customfield_15854", "customfield_10670"];
+// Country custom field for the BDSL project.
+// Confirmed via Jira API: customfield_15854, multi-select array format.
+// Fallbacks kept in case field ID differs in other environments.
+const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
 
 function countWorkDays(from: Date, to: Date): number {
   let count = 0;
@@ -121,7 +123,8 @@ async function forceSetCountry(base: string, auth: string, issueKey: string): Pr
     const res = await fetch(url, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ fields: { [field]: { value: "Brasil" } } }),
+      // customfield_15854 is a multi-select array — value must be wrapped in []
+      body: JSON.stringify({ fields: { [field]: [{ value: "Brasil" }] } }),
     });
     if (res.ok) {
       console.log(`[nova-demanda] forceSetCountry ✅ Country = Brasil set via ${field} on ${issueKey}`);
@@ -159,7 +162,9 @@ async function createJiraIssue(
       version: 1,
       content: [{ type: "paragraph", content: [{ type: "text", text: description }] }],
     },
-    issuetype: parentKey ? { name: "Subtask" } : { name: "Task" },
+    // Issue type IDs confirmed via Jira API for BDSL project:
+    // 10004 = Tarefa (Task), 10005 = Subtarefa (Sub-task)
+    issuetype: parentKey ? { id: "10005" } : { id: "10004" },
     ...(duedate ? { duedate } : {}),
     ...(accountId ? { assignee: { accountId } } : {}),
     ...(parentKey ? { parent: { key: parentKey } } : {}),
