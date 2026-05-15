@@ -40,14 +40,15 @@ function parseLocalDate(s: string): Date {
   return dt;
 }
 
-function getWeekDays(offsetWeeks: number): Date[] {
+/** Returns 10 working days (Mon–Fri × 2 weeks) starting from the current Monday + offset. */
+function getTwoWeekDays(offsetWeeks: number): Date[] {
   const now = new Date();
   const mon = new Date(now);
-  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offsetWeeks * 5);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offsetWeeks * 14);
   mon.setHours(0, 0, 0, 0);
-  return Array.from({ length: 5 }, (_, i) => {
+  return Array.from({ length: 10 }, (_, i) => {
     const d = new Date(mon);
-    d.setDate(mon.getDate() + i);
+    d.setDate(mon.getDate() + i + (i >= 5 ? 2 : 0)); // skip weekend
     return d;
   });
 }
@@ -217,13 +218,13 @@ export default function PerformanceDashboard() {
   }, []);
 
   const days  = useMemo(
-    () => view === "week" ? getWeekDays(offset) : getMonthDays(offset),
+    () => view === "week" ? getTwoWeekDays(offset) : getMonthDays(offset),
     [view, offset]
   );
   const today = new Date();
 
-  // CSS grid: task label column + N day columns, each filling available space (min 40px)
-  const GRID_COLS = `${LABEL_W}px repeat(${days.length}, minmax(40px, 1fr))`;
+  // CSS grid: task label column + N day columns, each filling available space (min 50px)
+  const GRID_COLS = `${LABEL_W}px repeat(${days.length}, minmax(50px, 1fr))`;
 
   const visible = tasks.filter((t) => !hidden.has(t.key));
 
@@ -422,7 +423,7 @@ export default function PerformanceDashboard() {
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none",
                   lineHeight: 1,
                 }}>
-                  📦 {bar!.dueLabel}
+                  Deadline: {bar!.dueLabel}
                 </span>
               )}
             </div>

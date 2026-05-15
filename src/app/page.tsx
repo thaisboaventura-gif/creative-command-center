@@ -78,6 +78,14 @@ function dayLabel(d: Date): string {
   return ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
 }
 
+/** Parse "YYYY-MM-DD" as LOCAL midnight — avoids UTC-offset off-by-one in BR timezone. */
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
 /* ── Gantt bars layout ── */
 
 interface Bar {
@@ -146,8 +154,8 @@ function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
       return true;
     })
     .map((task) => {
-      const due = new Date(task.dueDate!); due.setHours(0, 0, 0, 0);
-      const created = new Date(task.createdAt); created.setHours(0, 0, 0, 0);
+      const due = parseLocalDate(task.dueDate!);
+      const created = parseLocalDate(task.createdAt);
 
       // Skip if entirely outside visible window
       if (due.getTime() < firstDay.getTime()) return null;
@@ -286,7 +294,7 @@ export default function Dashboard() {
 
       {/* Gantt */}
       <div style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3" }}>
-        <div style={{ minWidth: 900 }}>
+        <div style={{ minWidth: 680 }}>
 
           {/* Header: day columns */}
           <div style={{ display: "grid", gridTemplateColumns: "180px repeat(10, 1fr)", borderBottom: "1px solid #eef0f3" }}>
@@ -300,26 +308,26 @@ export default function Dashboard() {
                 <div
                   key={i}
                   style={{
-                    padding: "10px 4px",
+                    padding: "8px 2px",
                     textAlign: "center",
                     borderLeft: isMonday ? "1px solid #eef0f3" : "none",
                     background: isT ? "#f5f3ff" : "transparent",
                     position: "relative",
                   }}
                 >
-                  <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  <div style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.3 }}>
                     {dayLabel(d)}
                   </div>
                   <div style={{
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: 700,
                     color: isT ? "white" : "#111",
                     marginTop: 2,
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    minWidth: 26,
-                    height: 26,
+                    minWidth: 22,
+                    height: 22,
                     borderRadius: "50%",
                     background: isT ? "#5b6cff" : "transparent",
                   }}>
@@ -428,8 +436,7 @@ export default function Dashboard() {
 
                     const isWaiting = bar.task.status === "in_review";
                     const _today = new Date(); _today.setHours(0,0,0,0);
-                    const _due = bar.task.dueDate ? new Date(bar.task.dueDate) : null;
-                    if (_due) _due.setHours(0,0,0,0);
+                    const _due = bar.task.dueDate ? parseLocalDate(bar.task.dueDate) : null;
                     const isDueToday = !!_due && _due.getTime() === _today.getTime();
 
                     const barBg = bar.isDone
