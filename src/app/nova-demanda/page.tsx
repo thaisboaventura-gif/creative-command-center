@@ -84,36 +84,6 @@ export default function NovaDemanda() {
               <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>{result.issueKey}</p>
             </div>
 
-            {/* Subtasks table */}
-            <div style={{ background: "#f9fafb", borderRadius: 8, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
-                Subtasks criadas
-              </div>
-              {result.subtasks.map((st, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < result.subtasks.length - 1 ? "1px solid #e5e7eb" : "none", fontSize: 13 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 600, color: "#111" }}>{st.label}</span>
-                    {st.key && (
-                      <span style={{ fontSize: 11, color: "#9ca3af" }}>{st.key}</span>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, color: "#374151" }}>
-                    <span>{st.assignee}</span>
-                    <span style={{ color: "#9ca3af" }}>{st.estimatedHours}h</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {result.alerts.length > 0 && (
-              <div style={{ background: "#fffbeb", borderRadius: 8, padding: 12, marginBottom: 16, border: "1px solid #fde68a" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#92400e", marginBottom: 6 }}>Alertas</div>
-                {result.alerts.map((a, i) => (
-                  <div key={i} style={{ fontSize: 12, color: "#78350f", marginBottom: 2 }}>{a}</div>
-                ))}
-              </div>
-            )}
-
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               {result.jiraLink && (
                 <a href={result.jiraLink} target="_blank" rel="noopener noreferrer"
