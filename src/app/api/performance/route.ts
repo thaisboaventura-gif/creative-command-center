@@ -157,13 +157,12 @@ export async function GET(req: Request) {
     // Query 1: active tasks for the performance team (any status)
     const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
 
-    // Query 2: All tasks created this year for the performance team.
-    // We intentionally skip the statusCategory filter here — the frontend isFullyDone()
-    // decides which tasks go into "Entregas concluídas".  Using `created` (not `updated`)
-    // so tasks that were closed months ago and never touched since are still returned.
+    // Query 2: ALL done tasks in the project this year (no team filter).
+    // We broaden the scope so we can detect tasks completed by the team regardless of
+    // who created them. The debug meta will show reporters/assignees so we can refine.
     const allTeam = [...PERFORMANCE_REPORTERS, ...PERFORMANCE_ASSIGNEES].join(", ");
     const currentYear = new Date().getFullYear();
-    const jql2 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${allTeam})) AND created >= "${currentYear}-01-01" ORDER BY created DESC`;
+    const jql2 = `project = ${project} AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY created DESC`;
 
     // Run both queries in parallel, then merge (deduplicate by key)
     const [raw1, raw2] = await Promise.all([
@@ -192,9 +191,18 @@ export async function GET(req: Request) {
       })
     );
 
-    // Debug: sample raw statuses so we can diagnose filtering issues
-    const sampleStatuses = raw.slice(0, 20).map((i) => ({
+    // Debug: sample raw statuses + all raw2 (done tasks) with reporter/assignee
+    const sampleStatuses = raw.slice(0, 10).map((i) => ({
       key: i.key,
+      status: (i.fields.status as { name: string })?.name ?? "?",
+      assignee: (i.fields.assignee as { displayName: string } | null)?.displayName ?? "",
+      reporter: (i.fields.reporter as { displayName: string } | null)?.displayName ?? "",
+      isBrasil: isBrasil(i.fields),
+    }));
+    // Also expose first 20 raw2 tasks so we can see who created done tasks
+    const raw2Sample = raw2.slice(0, 20).map((i) => ({
+      key: i.key,
+      title: ((i.fields.summary as string) ?? "").slice(0, 50),
       status: (i.fields.status as { name: string })?.name ?? "?",
       assignee: (i.fields.assignee as { displayName: string } | null)?.displayName ?? "",
       reporter: (i.fields.reporter as { displayName: string } | null)?.displayName ?? "",
@@ -210,6 +218,7 @@ export async function GET(req: Request) {
         raw2: raw2.length,
         raw2new: raw2.filter((i) => !seen.has(i.key)).length,
         sampleStatuses,
+        raw2Sample,
       },
     });
   } catch (err) {

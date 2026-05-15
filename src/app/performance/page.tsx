@@ -745,14 +745,28 @@ export default function PerformanceDashboard() {
 
       {/* ── Debug panel — remove when section is confirmed working ── */}
       {Array.isArray(debugMeta?.sampleStatuses) && (
-        <details style={{ marginBottom: 12, fontSize: 10, color: "#9ca3af", background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "6px 10px" }}>
+        <details style={{ marginBottom: 12, fontSize: 10, color: "#6b7280", background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "6px 10px" }}>
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>🔍 Debug API ({String(debugMeta!.raw1)} Q1 + {String(debugMeta!.raw2)} Q2 = {String(debugMeta!.total)} total, {String(debugMeta!.brasil)} após filtro Brasil)</summary>
-          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Q1 tasks (ativas da equipe):</div>
             {(debugMeta!.sampleStatuses as Array<{key:string;status:string;assignee:string;reporter:string;isBrasil:boolean}>).map((s) => (
-              <div key={s.key} style={{ fontFamily: "monospace" }}>
-                {s.key} | status: <b>{s.status}</b> | assignee: {s.assignee||"—"} | reporter: {s.reporter||"—"} | brasil: {s.isBrasil ? "✅" : "❌"}
+              <div key={s.key} style={{ fontFamily: "monospace", marginBottom: 2 }}>
+                {s.key} | <b>{s.status}</b> | assignee: {s.assignee||"—"} | reporter: {s.reporter||"—"} | brasil: {s.isBrasil ? "✅" : "❌"}
               </div>
             ))}
+            {Array.isArray(debugMeta!.raw2Sample) && (debugMeta!.raw2Sample as Array<{key:string;title:string;status:string;assignee:string;reporter:string;isBrasil:boolean}>).length > 0 && (
+              <>
+                <div style={{ fontWeight: 600, margin: "8px 0 4px" }}>Q2 tasks done (statusCategory=Done, sem filtro de equipe):</div>
+                {(debugMeta!.raw2Sample as Array<{key:string;title:string;status:string;assignee:string;reporter:string;isBrasil:boolean}>).map((s) => (
+                  <div key={s.key} style={{ fontFamily: "monospace", marginBottom: 2 }}>
+                    {s.key} | <b>{s.status}</b> | assignee: {s.assignee||"—"} | reporter: {s.reporter||"—"} | brasil: {s.isBrasil ? "✅" : "❌"} | {s.title}
+                  </div>
+                ))}
+              </>
+            )}
+            {Array.isArray(debugMeta!.raw2Sample) && (debugMeta!.raw2Sample as unknown[]).length === 0 && (
+              <div style={{ color: "#dc2626", fontWeight: 600 }}>⚠️ Q2 retornou 0 tasks — nenhuma task com statusCategory=Done em 2026 no projeto</div>
+            )}
           </div>
         </details>
       )}
