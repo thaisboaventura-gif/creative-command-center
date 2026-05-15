@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { sendSlackAlert } from "@/lib/slack";
+import {
+  fetchPipeline,
+  planSubtasks,
+  parseLocalDate,
+} from "@/lib/scheduler";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const JIRA_BASE = () => process.env.JIRA_BASE_URL?.trim() || "";
 const JIRA_AUTH = () => {
@@ -23,35 +29,12 @@ export interface SubtaskResult {
   label: string;
   assignee: string;
   deadline: string;
+  hours: number;
   key: string | null;
 }
 
 // Country custom field — confirmed for BDSL project
 const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
-
-/* ─── Date helpers ─── */
-
-function parseLocalDate(str: string): Date {
-  const [y, m, d] = str.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function formatDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function subtractWorkDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  let remaining = days;
-  while (remaining > 0) {
-    result.setDate(result.getDate() - 1);
-    if (result.getDay() !== 0 && result.getDay() !== 6) remaining--;
-  }
-  return result;
-}
 
 function countWorkDays(from: Date, to: Date): number {
   let count = 0;
@@ -64,78 +47,6 @@ function countWorkDays(from: Date, to: Date): number {
     cur.setDate(cur.getDate() + 1);
   }
   return count;
-}
-
-/* ─── Subtask plan calculator (backwards from main deadline) ───
- *
- * Order of delivery:
- *  1. Copy         → always first (copywriter delivers before design starts)
- *  2. Layout vídeo → D - 2 workdays  (Eduardo: designer delivers to motion)
- *  3. Layout estáticos → D - 1 workday (Eduardo: after video layout)
- *  4. Motion       → D (main deadline) (Larissa)
- *
- * Specialised types (Sinalização, Produto, Desdobramento) → main deadline
- */
-
-interface SubtaskPlan {
-  label: string;
-  assignee: string;
-  accountHint: string;
-  deadline: string;
-}
-
-function calcSubtaskPlans(tipos: string[], mainDeadlineStr: string): SubtaskPlan[] {
-  const D = parseLocalDate(mainDeadlineStr);
-  const plans: SubtaskPlan[] = [];
-
-  const hasMotion  = tipos.some((t) => t.includes("Motion") || t.includes("Vídeo"));
-  const hasPerf    = tipos.some((t) => t.includes("Anúncio") || t.includes("Performance") || t.includes("Desdobramento") || t.includes("Adaptação"));
-  const hasCopy    = tipos.some((t) => t === "Copy");
-  const hasSinal   = tipos.some((t) => t.includes("Sinalização") || t.includes("Evento"));
-  const hasProd    = tipos.some((t) => t.includes("Produto") || t.includes("Demo"));
-
-  // Deadline for each role (backwards calculation)
-  const motionDeadline         = D;
-  const layoutVideoDeadline    = subtractWorkDays(D, 2);   // motion needs 2 days after
-  const layoutStaticsDeadline  = hasMotion
-    ? subtractWorkDays(D, 1)   // after video layout, 1 day before final
-    : D;                        // if no motion, statics are the final delivery
-
-  // Copy is always first
-  let copyDeadline: Date;
-  if (hasMotion)             copyDeadline = subtractWorkDays(D, 3); // before layout video
-  else if (hasPerf || hasSinal || hasProd) copyDeadline = subtractWorkDays(D, 1); // 1 day before design
-  else                       copyDeadline = D; // only copy job
-
-  // 1 — Copy
-  if (hasCopy) {
-    plans.push({ label: "Copy", assignee: "Beatriz", accountHint: "beatriz", deadline: formatDate(copyDeadline) });
-  }
-
-  // 2 — Layout vídeo (Eduardo) → only when motion is involved
-  if (hasMotion) {
-    plans.push({ label: "Layout vídeo", assignee: "Eduardo", accountHint: "eduardo", deadline: formatDate(layoutVideoDeadline) });
-  }
-
-  // 3 — Layout estáticos (Eduardo) → performance / desdobramento
-  if (hasPerf) {
-    plans.push({ label: "Layout estáticos", assignee: "Eduardo", accountHint: "eduardo", deadline: formatDate(layoutStaticsDeadline) });
-  }
-
-  // 4 — Motion (Larissa)
-  if (hasMotion) {
-    plans.push({ label: "Motion", assignee: "Larissa", accountHint: "larissa", deadline: formatDate(motionDeadline) });
-  }
-
-  // Specialised — João
-  if (hasSinal) {
-    plans.push({ label: "Sinalização", assignee: "João", accountHint: "joao", deadline: mainDeadlineStr });
-  }
-  if (hasProd) {
-    plans.push({ label: "Produto/Demo", assignee: "João", accountHint: "joao", deadline: mainDeadlineStr });
-  }
-
-  return plans;
 }
 
 /* ─── Jira helpers ─── */
@@ -233,11 +144,14 @@ export async function POST(req: Request) {
     const auth    = JIRA_AUTH();
     const project = PROJECT();
 
+    // Fetch each team member's current pipeline (capacity-aware scheduling)
+    const pipeline = await fetchPipeline(base, auth, project);
+    const plans    = planSubtasks(tipos, descricao, prazo, pipeline);
+
     // Look up reporter account (by solicitante name) and assignee accounts in parallel
-    const plans = calcSubtaskPlans(tipos, prazo);
     const [reporterAccountId, ...assigneeAccountIds] = await Promise.all([
       findAccountId(base, auth, solicitante),
-      ...plans.map((p) => findAccountId(base, auth, p.accountHint)),
+      ...plans.map((p) => findAccountId(base, auth, p.person)),
     ]);
 
     // Build parent description
@@ -279,7 +193,7 @@ export async function POST(req: Request) {
         const st = await createJiraIssue(
           base, auth, project,
           stSummary,
-          `Subtask de ${plan.label} — prazo: ${plan.deadline}`,
+          `Subtask de ${plan.label} — estimativa: ${plan.hours}h — prazo: ${plan.deadline}`,
           plan.deadline,
           accountId,
           null,        // no reporter on subtasks
@@ -296,6 +210,7 @@ export async function POST(req: Request) {
           label:    plan.label,
           assignee: plan.assignee,
           deadline: plan.deadline,
+          hours:    plan.hours,
           key:      stKey,
         });
       }

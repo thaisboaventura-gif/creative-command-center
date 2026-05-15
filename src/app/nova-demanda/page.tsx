@@ -17,6 +17,7 @@ interface SubtaskResult {
   label: string;
   assignee: string;
   deadline: string;
+  hours?: number;
   key: string | null;
 }
 
@@ -123,6 +124,7 @@ export default function NovaDemanda() {
                   <div>
                     <span style={{ fontWeight: 600, fontSize: 13 }}>{titulo} | {st.label}</span>
                     <span style={{ fontSize: 12, color: "#6b7280", marginLeft: 8 }}>→ {st.assignee}</span>
+                    {st.hours && <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 6 }}>({st.hours}h)</span>}
                     {st.key && <span style={{ fontSize: 11, color: "#d1d5db", marginLeft: 6 }}>{st.key}</span>}
                   </div>
                   <span style={{ fontSize: 12, color: "#7c3aed", fontWeight: 600 }}>{formatBR(st.deadline)}</span>
