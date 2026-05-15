@@ -312,7 +312,7 @@ export default function NovaDemanda() {
             </label>
             <input style={inp} type="text" maxLength={40} disabled={busy}
               value={form.nomeTask} onChange={e => set("nomeTask", e.target.value)}
-              placeholder="Ex: Elo7 ADS" />
+              placeholder="Ex: SMB ADS" />
           </div>
 
           {/* 2 — Área */}
@@ -413,7 +413,7 @@ export default function NovaDemanda() {
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
               rows={4} maxLength={200} disabled={busy}
               value={form.sobreOQue} onChange={e => set("sobreOQue", e.target.value)}
-              placeholder="Ex: Campanha de retargeting Elo7 para lojistas que visitaram a LP" />
+              placeholder="Ex: Campanha SMB ADS para lojistas que visitaram a LP de planos" />
           </div>
           <div>
             <label style={lbl}>
@@ -423,7 +423,7 @@ export default function NovaDemanda() {
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
               rows={4} maxLength={200} disabled={busy}
               value={form.pedidoResumido} onChange={e => set("pedidoResumido", e.target.value)}
-              placeholder="Ex: 6 estáticos Meta Ads + 2 vídeos 9:16 para retargeting" />
+              placeholder="Ex: 6 estáticos Meta Ads + 2 vídeos 9:16 para SMB ADS" />
           </div>
           <div>
             <label style={lbl}>
@@ -433,7 +433,7 @@ export default function NovaDemanda() {
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
               rows={4} maxLength={200} disabled={busy}
               value={form.mensagem} onChange={e => set("mensagem", e.target.value)}
-              placeholder="Ex: Migre da Elo7 para a Nuvemshop antes do encerramento" />
+              placeholder="Ex: Abra sua loja com planos a partir de R$0 — SMB ADS" />
           </div>
 
           {/* 7 — Anexos */}
