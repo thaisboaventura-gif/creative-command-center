@@ -241,12 +241,17 @@ async function checkViability(
   body: NovaDemandaBody,
   pipeline: Record<string, { daily: Map<string, number> }>
 ): Promise<ViabilityResult> {
-  const { estaticos, videos, prazo } = body;
+  const { estaticos, videos, prazo, tipos } = body;
 
-  // Hour estimates: 1h per static (Eduardo), 4h layout + 4h motion = 8h per video
-  const eduHours = estaticos * 1 + videos * 4;
-  const larHours = videos * 4;
-  const totalHours = eduHours + larHours;
+  // Hour estimates per responsible:
+  //   Eduardo : estáticos × 1h  +  vídeos × 4h (layout)
+  //   Larissa : vídeos × 4h (motion)
+  //   Beatriz : 2h fixas se houver Copy
+  const hasCopy   = tipos.some(t => t === "Copy");
+  const eduHours  = estaticos * 1 + videos * 4;
+  const larHours  = videos * 4;
+  const beatHours = hasCopy ? 2 : 0;
+  const totalHours = eduHours + larHours + beatHours;
 
   if (totalHours === 0) return { viable: true };
 
@@ -254,11 +259,12 @@ async function checkViability(
   const D     = parseLocalDate(prazo);
   const workDays = Math.max(1, countWorkDays(today, D));
 
-  // Available capacity (daily cap × workdays − already booked in window)
+  // ── Available capacity in the [today, prazo] window ──────────────────────
+  // Total capacity in window minus hours already committed (from pipeline)
   function availCap(person: string): number {
-    const cap     = DAILY_CAPACITY[person] ?? 5.5;
-    const pLoad   = pipeline[person];
-    let booked    = 0;
+    const cap   = DAILY_CAPACITY[person] ?? 5.5;
+    const pLoad = pipeline[person];
+    let booked  = 0;
     if (pLoad) {
       for (const [dateStr, hrs] of pLoad.daily) {
         const d = parseLocalDate(dateStr);
@@ -268,26 +274,50 @@ async function checkViability(
     return Math.max(0, workDays * cap - booked);
   }
 
-  const eduAvail = availCap("eduardo");
-  const larAvail = availCap("larissa");
+  const eduAvail  = availCap("eduardo");
+  const larAvail  = availCap("larissa");
+  const beatAvail = availCap("beatriz");
 
-  const eduViable = eduHours === 0 || eduHours <= eduAvail;
-  const larViable = larHours === 0 || larHours <= larAvail;
+  const eduViable  = eduHours  === 0 || eduHours  <= eduAvail;
+  const larViable  = larHours  === 0 || larHours  <= larAvail;
+  const beatViable = beatHours === 0 || beatHours <= beatAvail;
 
-  if (eduViable && larViable) return { viable: true };
+  if (eduViable && larViable && beatViable) return { viable: true };
 
-  // Minimum days needed
-  const eduMinDays = eduHours > 0 ? Math.ceil(eduHours / (DAILY_CAPACITY.eduardo ?? 13.5)) : 0;
-  const larMinDays = larHours > 0 ? Math.ceil(larHours / (DAILY_CAPACITY.larissa ?? 13.5)) : 0;
-  const minDays    = Math.max(eduMinDays, larMinDays);
-  const minDate    = addWorkDays(today, minDays);
+  // ── Minimum viable date — walkforward using real pipeline load ────────────
+  // Walk day-by-day from today, accumulating *free* hours (cap − already booked).
+  // This respects that on a day where someone is already 80% committed,
+  // only 20% of their capacity is available for this new task.
+  function minDateForPerson(person: string, hoursNeeded: number): Date {
+    if (hoursNeeded <= 0) return new Date(today);
+    const cap = DAILY_CAPACITY[person] ?? 5.5;
+    let accum = 0;
+    const d   = new Date(today);
+    // Safety cap: never walk more than 120 days forward
+    for (let i = 0; i < 120 && accum < hoursNeeded; i++) {
+      d.setDate(d.getDate() + 1);
+      if (d.getDay() === 0 || d.getDay() === 6) continue; // skip weekends
+      const booked = pipeline[person]?.daily.get(formatDate(d)) ?? 0;
+      accum += Math.max(0, cap - booked);
+    }
+    return new Date(d);
+  }
+
+  const candidates: Date[] = [];
+  if (eduHours  > 0) candidates.push(minDateForPerson("eduardo", eduHours));
+  if (larHours  > 0) candidates.push(minDateForPerson("larissa", larHours));
+  if (beatHours > 0) candidates.push(minDateForPerson("beatriz", beatHours));
+
+  // The task is only done when ALL responsible have finished their part
+  const minDate = candidates.reduce((latest, d) => (d > latest ? d : latest), new Date(today));
+  const minDays = Math.max(1, countWorkDays(today, minDate));
 
   return {
     viable: false,
     min_date: formatDate(minDate),
     min_days: minDays,
     hours_needed: totalHours,
-    capacity_available: eduAvail + larAvail,
+    capacity_available: eduAvail + larAvail + (hasCopy ? beatAvail : 0),
   };
 }
 
