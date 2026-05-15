@@ -2,23 +2,62 @@
 
 import { useState } from "react";
 
+/* ─── Config ─── */
+
+const AREAS = ["Growth", "Performance", "D2C", "Next", "PMM", "RH", "Eventos", "Social", "CTAs", "Outros"];
+
 const TIPOS = [
   "Anúncio/Performance",
   "Sinalização/Evento",
   "Motion/Vídeo",
   "Copy",
-  "Produto/Demo",
   "Desdobramento/Adaptação",
+  "Revisão de apresentação",
+  "Banner/Header/WhatsApp image",
 ];
 
-type PageState = "idle" | "validating" | "questioning" | "creating" | "done" | "error";
+/* ─── Types ─── */
+
+type PageState =
+  | "idle"
+  | "validating"
+  | "needs_clarification"
+  | "deadline_issue"
+  | "creating"
+  | "done"
+  | "done_unassigned";
+
+interface FormData {
+  nomeTask: string;
+  area: string;
+  areaOutros: string;
+  tipos: string[];
+  estaticos: number;
+  videos: number;
+  dimensoesEstaticos: string;
+  dimensoesVideos: string;
+  duracaoVideos: string;
+  sobreOQue: string;
+  pedidoResumido: string;
+  mensagem: string;
+  prazo: string;
+  solicitanteNome: string;
+  solicitanteEmail: string;
+}
 
 interface SubtaskResult {
   label: string;
   assignee: string;
   deadline: string;
-  hours?: number;
+  hours: number;
   key: string | null;
+}
+
+interface DeadlineIssue {
+  min_date: string;
+  min_days: number;
+  hours_needed: number;
+  capacity_available: number;
 }
 
 interface DoneResult {
@@ -27,157 +66,285 @@ interface DoneResult {
   subtasks: SubtaskResult[];
 }
 
-function formatBR(dateStr: string) {
-  if (!dateStr) return "";
-  const [y, m, d] = dateStr.split("-");
+/* ─── Helpers ─── */
+
+function formatBR(s: string) {
+  if (!s) return "";
+  const [y, m, d] = s.split("-");
   return `${d}/${m}/${y}`;
 }
 
-export default function NovaDemanda() {
-  const [titulo, setTitulo] = useState("");
-  const [tipos, setTipos] = useState<string[]>([]);
-  const [descricao, setDescricao] = useState("");
-  const [prazo, setPrazo] = useState("");
-  const [solicitante, setSolicitante] = useState("");
+function Counter({ value, max }: { value: string; max: number }) {
+  const n = value.length;
+  const over = n > max;
+  return (
+    <span style={{ fontSize: 10, color: over ? "#dc2626" : "#9ca3af", marginLeft: 4 }}>
+      {n}/{max}
+    </span>
+  );
+}
 
+function NumSelect({ value, max, onChange, disabled }: { value: number; max: number; onChange: (v: number) => void; disabled?: boolean }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(Number(e.target.value))}
+      disabled={disabled}
+      style={{ ...inp, padding: "7px 10px", cursor: disabled ? "default" : "pointer" }}
+    >
+      {Array.from({ length: max + 1 }, (_, i) => (
+        <option key={i} value={i}>{i === 0 ? "0 (nenhum)" : i}</option>
+      ))}
+    </select>
+  );
+}
+
+/* ─── Main ─── */
+
+const emptyForm = (): FormData => ({
+  nomeTask: "", area: "", areaOutros: "", tipos: [],
+  estaticos: 0, videos: 0,
+  dimensoesEstaticos: "", dimensoesVideos: "", duracaoVideos: "",
+  sobreOQue: "", pedidoResumido: "", mensagem: "",
+  prazo: "", solicitanteNome: "", solicitanteEmail: "",
+});
+
+export default function NovaDemanda() {
+  const [form, setForm] = useState<FormData>(emptyForm());
   const [pageState, setPageState] = useState<PageState>("idle");
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState<DoneResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState("");
+
+  // Clarification
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [clarAnswer, setClarAnswer] = useState("");
+
+  // Deadline issue
+  const [deadlineIssue, setDeadlineIssue] = useState<DeadlineIssue | null>(null);
+  const [newPrazo, setNewPrazo] = useState("");
+
+  // Results
+  const [doneResult, setDoneResult] = useState<DoneResult | null>(null);
+  const [doneUnassignedKey, setDoneUnassignedKey] = useState<{ key: string; link: string | null } | null>(null);
 
   const busy = pageState === "validating" || pageState === "creating";
-  const locked = busy || pageState === "questioning";
-  const canSubmit = titulo.trim() && tipos.length > 0 && descricao.trim() && prazo && solicitante.trim();
 
-  async function validate(desc: string) {
-    const res = await fetch("/api/nova-demanda/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titulo, tipos, descricao: desc, prazo }),
-    });
-    return res.json() as Promise<{ ok: boolean; question?: string }>;
+  function set<K extends keyof FormData>(k: K, v: FormData[K]) {
+    setForm(p => ({ ...p, [k]: v }));
   }
 
-  async function createTask(desc: string) {
+  function toggleTipo(t: string) {
+    setForm(p => ({
+      ...p,
+      tipos: p.tipos.includes(t) ? p.tipos.filter(x => x !== t) : [...p.tipos, t],
+    }));
+  }
+
+  /* ─── Validate ─── */
+  async function doValidate(extraNote?: string): Promise<void> {
+    setPageState("validating");
+    try {
+      const body = buildPayload("validate", extraNote);
+      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+
+      if (data.status === "needs_clarification") {
+        setQuestions(data.questions ?? []);
+        setClarAnswer("");
+        setPageState("needs_clarification");
+      } else if (data.status === "deadline_issue") {
+        setDeadlineIssue(data);
+        setNewPrazo(data.min_date ?? "");
+        setPageState("deadline_issue");
+      } else {
+        // ok — proceed to create
+        await doCreate();
+      }
+    } catch {
+      await doCreate(); // fail-safe
+    }
+  }
+
+  /* ─── Create (normal) ─── */
+  async function doCreate(extraNote?: string): Promise<void> {
     setPageState("creating");
     try {
-      const res = await fetch("/api/nova-demanda", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ titulo, tipos, descricao: desc, prazo, solicitante }),
-      });
+      const body = buildPayload("create", extraNote);
+      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
-      if (data.error) { setErrorMsg(data.error); setPageState("error"); }
-      else { setResult({ issueKey: data.issueKey, jiraLink: data.jiraLink, subtasks: data.subtasks ?? [] }); setPageState("done"); }
-    } catch { setErrorMsg("Erro de conexão."); setPageState("error"); }
+      if (data.status === "created") {
+        setDoneResult({ issueKey: data.issueKey, jiraLink: data.jiraLink, subtasks: data.subtasks ?? [] });
+        setPageState("done");
+      } else {
+        setPageState("idle");
+      }
+    } catch { setPageState("idle"); }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canSubmit || busy) return;
-    setPageState("validating");
+  /* ─── Create unassigned ─── */
+  async function doCreateUnassigned(): Promise<void> {
+    setPageState("creating");
     try {
-      const check = await validate(descricao);
-      if (check.ok) await createTask(descricao);
-      else { setQuestion(check.question ?? "Pode detalhar melhor o briefing?"); setAnswer(""); setPageState("questioning"); }
-    } catch { await createTask(descricao); }
+      const body = buildPayload("force_create");
+      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+      setDoneUnassignedKey({ key: data.issueKey, link: data.jiraLink });
+      setPageState("done_unassigned");
+    } catch { setPageState("idle"); }
   }
 
-  async function handleAnswer(e: React.FormEvent) {
-    e.preventDefault();
-    if (!answer.trim() || busy) return;
-    const enriched = `${descricao}\n\n${answer.trim()}`;
-    setPageState("validating");
-    try {
-      const check = await validate(enriched);
-      if (check.ok) await createTask(enriched);
-      else { setQuestion(check.question ?? "Mais algum detalhe?"); setAnswer(""); setPageState("questioning"); }
-    } catch { await createTask(enriched); }
+  function buildPayload(mode: string, extraNote?: string) {
+    const prazoToUse = mode === "create" && newPrazo ? newPrazo : form.prazo;
+    const enrichedPedido = extraNote
+      ? `${form.pedidoResumido}\n\n[Complemento]: ${extraNote}`
+      : form.pedidoResumido;
+    return { ...form, prazo: prazoToUse, pedidoResumido: enrichedPedido, mode };
   }
 
-  function reset() {
-    setTitulo(""); setTipos([]); setDescricao(""); setPrazo(""); setSolicitante("");
-    setQuestion(""); setAnswer(""); setResult(null); setErrorMsg("");
-    setPageState("idle");
-  }
+  /* ─── canSubmit ─── */
+  const areaFilled = form.area && (form.area !== "Outros" || form.areaOutros.trim());
+  const canSubmit = !!(
+    form.nomeTask.trim() && areaFilled && form.tipos.length > 0 &&
+    form.sobreOQue.trim() && form.pedidoResumido.trim() && form.mensagem.trim() &&
+    form.prazo && form.solicitanteNome.trim() && form.solicitanteEmail.trim()
+  );
 
-  /* ── Done ── */
-  if (pageState === "done" && result) {
+  /* ─── Done screens ─── */
+
+  if (pageState === "done_unassigned" && doneUnassignedKey) {
     return (
       <div style={pg}>
         <div style={wrap}>
-          <a href="/" style={backLink}>← Painel</a>
-          <div style={{ marginTop: 32, textAlign: "center" }}>
-            <div style={{ fontSize: 36 }}>✅</div>
-            <h2 style={{ margin: "8px 0 4px", fontSize: 20, fontWeight: 700 }}>Demanda criada!</h2>
-            <span style={{ display: "inline-block", background: "#ede9fe", color: "#7c3aed", fontWeight: 700, fontSize: 15, padding: "4px 16px", borderRadius: 6 }}>
-              {result.issueKey}
-            </span>
-          </div>
-
-          {result.subtasks.length > 0 && (
-            <div style={{ marginTop: 24 }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Subtasks</p>
-              {result.subtasks.map((st, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #f3f4f6" }}>
-                  <div>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{titulo} | {st.label}</span>
-                    <span style={{ fontSize: 12, color: "#6b7280", marginLeft: 8 }}>→ {st.assignee}</span>
-                    {st.hours && <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 6 }}>({st.hours}h)</span>}
-                    {st.key && <span style={{ fontSize: 11, color: "#d1d5db", marginLeft: 6 }}>{st.key}</span>}
-                  </div>
-                  <span style={{ fontSize: 12, color: "#7c3aed", fontWeight: 600 }}>{formatBR(st.deadline)}</span>
-                </div>
-              ))}
+          <div style={{ ...card, borderLeft: "4px solid #f59e0b" }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>⚠️</div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 6px" }}>Negociar prazo com Thais Boaventura</h2>
+            <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.6, margin: "0 0 16px" }}>
+              Essa demanda precisa de mais tempo do que o prazo informado permite.<br />
+              A task foi criada mas precisa de análise antes de ser distribuída.<br />
+              Thais vai entrar em contato em breve.
+            </p>
+            <div style={{ background: "#fef3c7", borderRadius: 8, padding: "10px 14px", marginBottom: 16, display: "inline-block" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#92400e" }}>
+                {doneUnassignedKey.key}
+              </span>
             </div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, marginTop: 24 }}>
-            {result.jiraLink && (
-              <a href={result.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
-            )}
-            <button onClick={reset} style={btnGhost}>Nova demanda</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {doneUnassignedKey.link && (
+                <a href={doneUnassignedKey.link} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
+              )}
+              <a href="/" style={btnGhost}>Voltar ao painel</a>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  /* ── Form ── */
+  if (pageState === "done" && doneResult) {
+    return (
+      <div style={pg}>
+        <div style={wrap}>
+          <div style={card}>
+            <div style={{ textAlign: "center", paddingBottom: 16 }}>
+              <div style={{ fontSize: 36 }}>✅</div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "8px 0 4px" }}>Demanda criada!</h2>
+              <span style={{ display: "inline-block", background: "#ede9fe", color: "#7c3aed", fontWeight: 700, fontSize: 15, padding: "4px 16px", borderRadius: 6 }}>
+                {doneResult.issueKey}
+              </span>
+            </div>
+
+            {doneResult.subtasks.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: "1px solid #f3f4f6", paddingTop: 12 }}>
+                <p style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, margin: "0 0 10px" }}>Subtasks</p>
+                {doneResult.subtasks.map((st, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f9fafb" }}>
+                    <div>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{form.nomeTask} | {st.label}</span>
+                      <span style={{ fontSize: 12, color: "#6b7280", marginLeft: 8 }}>→ {st.assignee}</span>
+                      <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 6 }}>({st.hours}h)</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: "#7c3aed", fontWeight: 600 }}>{formatBR(st.deadline)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              {doneResult.jiraLink && (
+                <a href={doneResult.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
+              )}
+              <button onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); }} style={btnGhost}>
+                Nova demanda
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Form ─── */
+
   return (
     <div style={pg}>
       <div style={wrap}>
-        <a href="/" style={backLink}>← Painel</a>
-        <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: "6px 0 24px" }}>Nova demanda</h1>
+        <a href="/" style={{ fontSize: 12, color: "#7c3aed", textDecoration: "none" }}>← Painel</a>
+        <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: "6px 0 20px" }}>Nova demanda</h1>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-          {/* Título */}
+          {/* 1 — Nome da task */}
           <div>
-            <label style={lbl}>Título</label>
-            <input style={inp} type="text" value={titulo} disabled={locked}
-              onChange={e => setTitulo(e.target.value)}
-              placeholder="Ex: SMB ADS | Campanha Dia das Mães" />
+            <label style={lbl}>
+              Nome da task *
+              <Counter value={form.nomeTask} max={40} />
+            </label>
+            <input style={inp} type="text" maxLength={40} disabled={busy}
+              value={form.nomeTask} onChange={e => set("nomeTask", e.target.value)}
+              placeholder="Ex: Elo7 ADS" />
           </div>
 
-          {/* Tipo */}
+          {/* 2 — Área */}
           <div>
-            <label style={lbl}>Tipo de peça</label>
+            <label style={lbl}>Área relacionada *</label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-              {TIPOS.map(t => {
-                const sel = tipos.includes(t);
+              {AREAS.map(a => {
+                const sel = form.area === a;
                 return (
-                  <button key={t} type="button" disabled={locked}
-                    onClick={() => setTipos(p => sel ? p.filter(x => x !== t) : [...p, t])}
+                  <button key={a} type="button" disabled={busy}
+                    onClick={() => set("area", a)}
                     style={{
-                      padding: "5px 11px", borderRadius: 20, fontSize: 12,
-                      fontWeight: sel ? 600 : 400,
-                      border: sel ? "1.5px solid #7c3aed" : "1px solid #d1d5db",
+                      padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: sel ? 700 : 400,
+                      border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
                       background: sel ? "#ede9fe" : "white",
                       color: sel ? "#7c3aed" : "#6b7280",
-                      cursor: locked ? "default" : "pointer",
-                      transition: "all .1s",
+                      cursor: busy ? "default" : "pointer", transition: "all .1s",
+                    }}>
+                    {a}
+                  </button>
+                );
+              })}
+            </div>
+            {form.area === "Outros" && (
+              <input style={{ ...inp, marginTop: 8 }} type="text" disabled={busy}
+                value={form.areaOutros} onChange={e => set("areaOutros", e.target.value)}
+                placeholder="Qual área?" />
+            )}
+          </div>
+
+          {/* 3 — Tipo */}
+          <div>
+            <label style={lbl}>Tipo de peça * (pode selecionar mais de um)</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              {TIPOS.map(t => {
+                const sel = form.tipos.includes(t);
+                return (
+                  <button key={t} type="button" disabled={busy}
+                    onClick={() => toggleTipo(t)}
+                    style={{
+                      padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: sel ? 600 : 400,
+                      border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                      background: sel ? "#ede9fe" : "white",
+                      color: sel ? "#7c3aed" : "#6b7280",
+                      cursor: busy ? "default" : "pointer", transition: "all .1s",
                     }}>
                     {sel ? "✓ " : ""}{t}
                   </button>
@@ -186,96 +353,205 @@ export default function NovaDemanda() {
             </div>
           </div>
 
-          {/* Briefing */}
-          <div>
-            <label style={lbl}>Briefing</label>
-            <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.55, minHeight: 100 }}
-              value={descricao} disabled={locked}
-              onChange={e => setDescricao(e.target.value)}
-              placeholder="Contexto, formatos/dimensões, mensagem principal, referências, público-alvo..."
-              rows={4} />
-          </div>
-
-          {/* Prazo + Solicitante */}
+          {/* 4 — Número de peças */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
-              <label style={lbl}>Prazo</label>
-              <input style={inp} type="date" value={prazo} disabled={locked} onChange={e => setPrazo(e.target.value)} />
+              <label style={lbl}>Estáticos</label>
+              <NumSelect value={form.estaticos} max={50} disabled={busy} onChange={v => set("estaticos", v)} />
             </div>
             <div>
-              <label style={lbl}>Solicitante</label>
-              <input style={inp} type="text" value={solicitante} disabled={locked}
-                onChange={e => setSolicitante(e.target.value)} placeholder="Seu nome" />
+              <label style={lbl}>Vídeos</label>
+              <NumSelect value={form.videos} max={20} disabled={busy} onChange={v => set("videos", v)} />
             </div>
           </div>
 
-          {/* Agent question — inline, above submit */}
-          {pageState === "questioning" && (
-            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, padding: "14px 16px" }}>
-              <p style={{ margin: "0 0 8px", fontSize: 13, color: "#92400e", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                🤔 {question}
+          {/* 5 — Dimensões (condicionais) */}
+          {form.estaticos > 0 && (
+            <div>
+              <label style={lbl}>Dimensões dos estáticos</label>
+              <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={2} disabled={busy}
+                value={form.dimensoesEstaticos} onChange={e => set("dimensoesEstaticos", e.target.value)}
+                placeholder="Ex: 1080×1080, 1080×1920" />
+            </div>
+          )}
+          {form.videos > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={lbl}>Dimensões dos vídeos</label>
+                <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={2} disabled={busy}
+                  value={form.dimensoesVideos} onChange={e => set("dimensoesVideos", e.target.value)}
+                  placeholder="Ex: 9:16, 1:1, 4:5" />
+              </div>
+              <div>
+                <label style={lbl}>Duração dos vídeos</label>
+                <input style={inp} type="text" disabled={busy}
+                  value={form.duracaoVideos} onChange={e => set("duracaoVideos", e.target.value)}
+                  placeholder="Ex: 15s, 30s" />
+              </div>
+            </div>
+          )}
+
+          {/* 6 — Descritivo */}
+          <div>
+            <label style={lbl}>
+              Sobre o que? *
+              <Counter value={form.sobreOQue} max={200} />
+            </label>
+            <input style={inp} type="text" maxLength={200} disabled={busy}
+              value={form.sobreOQue} onChange={e => set("sobreOQue", e.target.value)}
+              placeholder="Ex: Campanha de retargeting Elo7 para lojistas que visitaram a LP" />
+          </div>
+          <div>
+            <label style={lbl}>
+              Pedido resumido *
+              <Counter value={form.pedidoResumido} max={200} />
+            </label>
+            <input style={inp} type="text" maxLength={200} disabled={busy}
+              value={form.pedidoResumido} onChange={e => set("pedidoResumido", e.target.value)}
+              placeholder="Ex: 6 estáticos Meta Ads + 2 vídeos 9:16 para retargeting" />
+          </div>
+          <div>
+            <label style={lbl}>
+              Qual mensagem quer passar? *
+              <Counter value={form.mensagem} max={200} />
+            </label>
+            <input style={inp} type="text" maxLength={200} disabled={busy}
+              value={form.mensagem} onChange={e => set("mensagem", e.target.value)}
+              placeholder="Ex: Migre da Elo7 para a Nuvemshop antes do encerramento" />
+          </div>
+
+          {/* 7 — Prazo */}
+          <div>
+            <label style={lbl}>Prazo desejado *</label>
+            <input style={inp} type="date" disabled={busy}
+              value={form.prazo} onChange={e => set("prazo", e.target.value)} />
+          </div>
+
+          {/* 8 — Solicitante */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={lbl}>Nome completo *</label>
+              <input style={inp} type="text" disabled={busy}
+                value={form.solicitanteNome} onChange={e => set("solicitanteNome", e.target.value)}
+                placeholder="Seu nome" />
+            </div>
+            <div>
+              <label style={lbl}>Email *</label>
+              <input style={inp} type="email" disabled={busy}
+                value={form.solicitanteEmail} onChange={e => set("solicitanteEmail", e.target.value)}
+                placeholder="seu@email.com" />
+            </div>
+          </div>
+
+          {/* ─── Needs Clarification card ─── */}
+          {pageState === "needs_clarification" && questions.length > 0 && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 10, padding: 16 }}>
+              <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: "#92400e" }}>
+                🤔 Faltam algumas informações:
               </p>
-              <textarea style={{ ...inp, background: "white", minHeight: 64, resize: "vertical" }}
-                value={answer} autoFocus rows={3}
-                onChange={e => setAnswer(e.target.value)}
-                placeholder="Sua resposta..." />
+              <ol style={{ margin: "0 0 12px", padding: "0 0 0 18px", fontSize: 13, color: "#78350f", lineHeight: 1.7 }}>
+                {questions.map((q, i) => <li key={i}>{q}</li>)}
+              </ol>
+              <textarea
+                value={clarAnswer}
+                onChange={e => setClarAnswer(e.target.value)}
+                autoFocus rows={3}
+                placeholder="Sua resposta..."
+                style={{ ...inp, resize: "vertical", background: "white", borderColor: "#fcd34d", lineHeight: 1.5 }}
+              />
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button type="button" onClick={handleAnswer} disabled={!answer.trim() || busy}
-                  style={{ ...btnPrimary, background: "#d97706", opacity: !answer.trim() || busy ? .5 : 1, width: "auto", padding: "8px 18px", fontSize: 12 }}>
-                  {busy ? "Verificando..." : "Confirmar →"}
+                <button disabled={!clarAnswer.trim() || busy} onClick={() => doValidate(clarAnswer)}
+                  style={{ ...btnPrimary, width: "auto", padding: "9px 18px", background: "#d97706", opacity: !clarAnswer.trim() || busy ? .5 : 1 }}>
+                  {busy ? "Verificando..." : "Confirmar e criar →"}
                 </button>
-                <button type="button" onClick={() => createTask(descricao)}
-                  style={{ ...btnGhost, width: "auto", padding: "8px 14px", fontSize: 12 }}>
+                <button onClick={() => doCreate(clarAnswer)} disabled={busy}
+                  style={{ ...btnGhost, width: "auto", padding: "9px 14px", fontSize: 12 }}>
                   Criar assim mesmo
                 </button>
               </div>
             </div>
           )}
 
-          {/* Error */}
-          {pageState === "error" && (
-            <p style={{ fontSize: 13, color: "#b91c1c", margin: 0 }}>❌ {errorMsg}</p>
+          {/* ─── Deadline Issue card ─── */}
+          {pageState === "deadline_issue" && deadlineIssue && (
+            <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: 16 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: "#9a3412" }}>
+                ⚠️ O prazo solicitado não é viável
+              </p>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "#7c2d12", lineHeight: 1.6 }}>
+                Com {form.estaticos} estático{form.estaticos !== 1 ? "s" : ""} + {form.videos} vídeo{form.videos !== 1 ? "s" : ""},
+                precisamos de mínimo <strong>{deadlineIssue.min_days} dias úteis</strong>.<br />
+                <strong>Prazo mínimo viável: {formatBR(deadlineIssue.min_date)}</strong>
+              </p>
+              <div>
+                <label style={{ ...lbl, color: "#9a3412" }}>📅 Mudar prazo</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...inp, flex: 1 }} type="date" value={newPrazo}
+                    min={deadlineIssue.min_date}
+                    onChange={e => setNewPrazo(e.target.value)} />
+                  <button disabled={!newPrazo || busy} onClick={async () => {
+                    set("prazo", newPrazo);
+                    await doCreate();
+                  }}
+                    style={{ ...btnPrimary, width: "auto", padding: "8px 16px", opacity: !newPrazo || busy ? .5 : 1 }}>
+                    {busy ? "Criando..." : "Criar com novo prazo →"}
+                  </button>
+                </div>
+              </div>
+              <div style={{ marginTop: 12, borderTop: "1px solid #fed7aa", paddingTop: 12 }}>
+                <button disabled={busy} onClick={doCreateUnassigned}
+                  style={{ ...btnGhost, width: "auto", padding: "8px 14px", fontSize: 12, color: "#9a3412", borderColor: "#fed7aa" }}>
+                  🚫 Impossível mudar prazo — criar mesmo assim
+                </button>
+              </div>
+            </div>
           )}
 
-          {/* Submit */}
-          {pageState !== "questioning" && (
-            <button type="submit" disabled={!canSubmit || busy}
+          {/* ─── Submit ─── */}
+          {pageState !== "needs_clarification" && pageState !== "deadline_issue" && (
+            <button
+              disabled={!canSubmit || busy}
+              onClick={() => doValidate()}
               style={{ ...btnPrimary, opacity: !canSubmit || busy ? .45 : 1, cursor: busy ? "wait" : "pointer" }}>
-              {pageState === "validating" ? "Analisando..." :
+              {pageState === "validating" ? "Analisando briefing..." :
                pageState === "creating"   ? "Criando no Jira..." :
                "Criar demanda →"}
             </button>
           )}
-        </form>
+
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── Tokens ── */
+/* ─── Tokens ─── */
+
 const pg: React.CSSProperties = {
   minHeight: "100vh", background: "#f8f9fb",
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
   padding: "28px 16px 64px",
 };
-const wrap: React.CSSProperties = { width: "100%", maxWidth: 560, margin: "0 auto" };
-const backLink: React.CSSProperties = { fontSize: 12, color: "#7c3aed", textDecoration: "none" };
-const lbl: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 };
+const wrap: React.CSSProperties = { width: "100%", maxWidth: 580, margin: "0 auto" };
+const card: React.CSSProperties = {
+  background: "white", borderRadius: 12, border: "1px solid #e5e7eb",
+  padding: 24, boxShadow: "0 1px 4px rgba(0,0,0,.06)",
+};
+const lbl: React.CSSProperties = {
+  display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5,
+};
 const inp: React.CSSProperties = {
   width: "100%", padding: "8px 11px", borderRadius: 7,
   border: "1px solid #d1d5db", fontSize: 13, outline: "none",
-  fontFamily: "inherit", boxSizing: "border-box", color: "#111",
-  background: "white",
+  fontFamily: "inherit", boxSizing: "border-box", color: "#111", background: "white",
 };
 const btnPrimary: React.CSSProperties = {
   display: "block", width: "100%", padding: "11px 16px", borderRadius: 8,
   border: "none", background: "#7c3aed", color: "white",
-  fontSize: 13, fontWeight: 600, cursor: "pointer",
-  textAlign: "center", textDecoration: "none",
+  fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "center", textDecoration: "none",
 };
 const btnGhost: React.CSSProperties = {
   display: "block", width: "100%", padding: "10px 16px", borderRadius: 8,
   border: "1px solid #d1d5db", background: "white", color: "#374151",
-  fontSize: 13, fontWeight: 500, cursor: "pointer",
-  textAlign: "center", textDecoration: "none",
+  fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "center", textDecoration: "none",
 };

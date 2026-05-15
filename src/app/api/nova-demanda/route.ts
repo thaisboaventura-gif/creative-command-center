@@ -4,25 +4,46 @@ import {
   fetchPipeline,
   planSubtasks,
   parseLocalDate,
+  formatDate,
+  DAILY_CAPACITY,
 } from "@/lib/scheduler";
 
-export const dynamic = "force-dynamic";
+export const dynamic   = "force-dynamic";
 export const maxDuration = 60;
+
+/* ─── Config ─── */
 
 const JIRA_BASE = () => process.env.JIRA_BASE_URL?.trim() || "";
 const JIRA_AUTH = () => {
-  const email = process.env.JIRA_EMAIL?.trim() || "";
-  const token = process.env.JIRA_API_TOKEN?.trim() || "";
-  return Buffer.from(`${email}:${token}`).toString("base64");
+  const e = process.env.JIRA_EMAIL?.trim() || "";
+  const t = process.env.JIRA_API_TOKEN?.trim() || "";
+  return Buffer.from(`${e}:${t}`).toString("base64");
 };
 const PROJECT = () => process.env.JIRA_PROJECT_KEY?.trim() || "BDSL";
 
-interface DemandaBody {
-  titulo: string;
+// Country field candidates (tries each until one works)
+const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
+
+/* ─── Types ─── */
+
+interface NovaDemandaBody {
+  mode: "validate" | "create" | "force_create";
+  // Fields
+  nomeTask: string;
+  area: string;
+  areaOutros?: string;
   tipos: string[];
-  descricao: string;
+  estaticos: number;
+  videos: number;
+  dimensoesEstaticos?: string;
+  dimensoesVideos?: string;
+  duracaoVideos?: string;
+  sobreOQue: string;
+  pedidoResumido: string;
+  mensagem: string;
   prazo: string;
-  solicitante: string;
+  solicitanteNome: string;
+  solicitanteEmail: string;
 }
 
 export interface SubtaskResult {
@@ -33,15 +54,12 @@ export interface SubtaskResult {
   key: string | null;
 }
 
-// Country custom field — confirmed for BDSL project
-const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
+/* ─── Helpers ─── */
 
 function countWorkDays(from: Date, to: Date): number {
   let count = 0;
-  const cur = new Date(from);
-  cur.setHours(0, 0, 0, 0);
-  const end = new Date(to);
-  end.setHours(0, 0, 0, 0);
+  const cur = new Date(from); cur.setHours(0, 0, 0, 0);
+  const end = new Date(to);   end.setHours(0, 0, 0, 0);
   while (cur <= end) {
     if (cur.getDay() !== 0 && cur.getDay() !== 6) count++;
     cur.setDate(cur.getDate() + 1);
@@ -49,193 +67,364 @@ function countWorkDays(from: Date, to: Date): number {
   return count;
 }
 
-/* ─── Jira helpers ─── */
+function addWorkDays(from: Date, n: number): Date {
+  const r = new Date(from);
+  let i = 0;
+  while (i < n) {
+    r.setDate(r.getDate() + 1);
+    if (r.getDay() !== 0 && r.getDay() !== 6) i++;
+  }
+  return r;
+}
 
 async function findAccountId(base: string, auth: string, hint: string): Promise<string | null> {
   try {
     const url = `${base}/rest/api/3/user/search?query=${encodeURIComponent(hint)}&maxResults=5`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-    });
+    const res = await fetch(url, { headers: { Authorization: `Basic ${auth}`, Accept: "application/json" } });
     if (!res.ok) return null;
     const users = await res.json();
-    if (Array.isArray(users) && users.length > 0) return users[0].accountId;
-    return null;
-  } catch {
-    return null;
-  }
+    return Array.isArray(users) && users.length > 0 ? users[0].accountId : null;
+  } catch { return null; }
 }
 
 async function forceSetCountry(base: string, auth: string, issueKey: string): Promise<void> {
   const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
-  const headers = {
-    Authorization: `Basic ${auth}`,
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Basic ${auth}`, Accept: "application/json", "Content-Type": "application/json" };
   for (const field of COUNTRY_CANDIDATES) {
-    const res = await fetch(url, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({ fields: { [field]: [{ value: "Brasil" }] } }),
-    });
-    if (res.ok) {
-      console.log(`[nova-demanda] forceSetCountry ✅ ${field} on ${issueKey}`);
-      return;
-    }
+    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify({ fields: { [field]: [{ value: "Brasil" }] } }) });
+    if (res.ok) return;
   }
-  console.warn(`[nova-demanda] forceSetCountry failed for all fields on ${issueKey}`);
 }
 
 async function createJiraIssue(
-  base: string,
-  auth: string,
-  project: string,
-  summary: string,
-  descriptionText: string,
-  duedate: string,
-  assigneeAccountId: string | null,
-  reporterAccountId: string | null,
-  parentKey?: string
+  base: string, auth: string, project: string,
+  summary: string, descText: string, duedate: string,
+  assigneeId: string | null, reporterId: string | null, parentKey?: string
 ): Promise<{ key: string; self?: string } | null> {
-  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue`;
-  const headers = {
-    Authorization: `Basic ${auth}`,
-    Accept: "application/json",
-    "Content-Type": "application/json",
+  const url     = `${base.replace(/\/$/, "")}/rest/api/3/issue`;
+  const headers = { Authorization: `Basic ${auth}`, Accept: "application/json", "Content-Type": "application/json" };
+  const fields: Record<string, unknown> = {
+    project:     { key: project },
+    summary,
+    description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: descText }] }] },
+    issuetype:   parentKey ? { id: "10005" } : { id: "10004" },
+    ...(duedate     ? { duedate }                          : {}),
+    ...(assigneeId  ? { assignee: { accountId: assigneeId } } : {}),
+    ...(reporterId && !parentKey ? { reporter: { accountId: reporterId } } : {}),
+    ...(parentKey   ? { parent: { key: parentKey } }       : {}),
   };
 
-  const fields: Record<string, unknown> = {
-    project: { key: project },
-    summary,
-    description: {
-      type: "doc",
-      version: 1,
-      content: [{ type: "paragraph", content: [{ type: "text", text: descriptionText }] }],
-    },
-    issuetype: parentKey ? { id: "10005" } : { id: "10004" },
-    ...(duedate ? { duedate } : {}),
-    ...(assigneeAccountId ? { assignee: { accountId: assigneeAccountId } } : {}),
-    ...(reporterAccountId && !parentKey ? { reporter: { accountId: reporterAccountId } } : {}),
-    ...(parentKey ? { parent: { key: parentKey } } : {}),
-  };
+  // Try to set OWNER field (area) if env var is set
+  const ownerField = process.env.JIRA_OWNER_FIELD?.trim();
+  if (ownerField && !parentKey && fields.description) {
+    // owner is stored in descText header — Jira text field
+    // Note: set via PUT after creation since field type may vary
+  }
 
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields }) });
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error("[nova-demanda] Jira create failed:", res.status, errText);
-    return null;
-  }
+  if (!res.ok) { console.error("[nova-demanda] create failed", res.status, await res.text()); return null; }
   return res.json();
+}
+
+/* ─── Claude validation ─── */
+
+async function callClaude(system: string, user: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514", max_tokens: 512,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Claude ${res.status}`);
+  const data = await res.json();
+  return data.content?.[0]?.text ?? "";
+}
+
+const VALIDATION_SYSTEM = `Você valida briefings criativos para o time de Brand Creative da Nuvemshop.
+
+REGRAS:
+1. Peças básicas (Banner/Header/WhatsApp image, header de e-mail, in-app, banner web) → NÃO peça dimensões.
+2. Anúncios pagos (Anúncio/Performance) com estáticos > 0 → dimensões obrigatórias.
+3. Motion/Vídeo com vídeos > 0 → dimensões e duração obrigatórias.
+4. Mensagem vaga ou genérica demais (< 8 palavras) → sugira 3 conceitos baseados no contexto.
+5. D2C Summit, D2C, Summit = contexto conhecido → NÃO pedir explicação do evento.
+6. Textos auxiliares Meta/Google/CTAs variados/legendas → NÃO bloquear.
+
+Responda APENAS com JSON:
+{ "ok": true }
+ou
+{ "ok": false, "questions": ["pergunta 1", "pergunta 2"] }
+
+Máximo 2 perguntas diretas. Sem introdução, sem texto fora do JSON.`;
+
+async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; questions?: string[] }> {
+  const tipo  = body.tipos.join(", ");
+  const user  = `
+Tipo(s): ${tipo}
+Estáticos: ${body.estaticos}
+Vídeos: ${body.videos}
+Dimensões estáticos: ${body.dimensoesEstaticos || "(não informado)"}
+Dimensões vídeos: ${body.dimensoesVideos || "(não informado)"}
+Duração vídeos: ${body.duracaoVideos || "(não informado)"}
+Sobre: ${body.sobreOQue}
+Pedido: ${body.pedidoResumido}
+Mensagem: ${body.mensagem}
+  `.trim();
+
+  const raw   = await callClaude(VALIDATION_SYSTEM, user);
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return { ok: true };
+  return JSON.parse(match[0]);
+}
+
+/* ─── Deadline viability check ─── */
+
+interface ViabilityResult {
+  viable: boolean;
+  min_date?: string;
+  min_days?: number;
+  hours_needed?: number;
+  capacity_available?: number;
+}
+
+async function checkViability(
+  body: NovaDemandaBody,
+  pipeline: Record<string, { daily: Map<string, number> }>
+): Promise<ViabilityResult> {
+  const { estaticos, videos, prazo } = body;
+
+  // Hour estimates: 1h per static (Eduardo), 4h layout + 4h motion = 8h per video
+  const eduHours = estaticos * 1 + videos * 4;
+  const larHours = videos * 4;
+  const totalHours = eduHours + larHours;
+
+  if (totalHours === 0) return { viable: true };
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const D     = parseLocalDate(prazo);
+  const workDays = Math.max(1, countWorkDays(today, D));
+
+  // Available capacity (daily cap × workdays − already booked in window)
+  function availCap(person: string): number {
+    const cap     = DAILY_CAPACITY[person] ?? 5.5;
+    const pLoad   = pipeline[person];
+    let booked    = 0;
+    if (pLoad) {
+      for (const [dateStr, hrs] of pLoad.daily) {
+        const d = parseLocalDate(dateStr);
+        if (d >= today && d <= D) booked += hrs;
+      }
+    }
+    return Math.max(0, workDays * cap - booked);
+  }
+
+  const eduAvail = availCap("eduardo");
+  const larAvail = availCap("larissa");
+
+  const eduViable = eduHours === 0 || eduHours <= eduAvail;
+  const larViable = larHours === 0 || larHours <= larAvail;
+
+  if (eduViable && larViable) return { viable: true };
+
+  // Minimum days needed
+  const eduMinDays = eduHours > 0 ? Math.ceil(eduHours / (DAILY_CAPACITY.eduardo ?? 13.5)) : 0;
+  const larMinDays = larHours > 0 ? Math.ceil(larHours / (DAILY_CAPACITY.larissa ?? 13.5)) : 0;
+  const minDays    = Math.max(eduMinDays, larMinDays);
+  const minDate    = addWorkDays(today, minDays);
+
+  return {
+    viable: false,
+    min_date: formatDate(minDate),
+    min_days: minDays,
+    hours_needed: totalHours,
+    capacity_available: eduAvail + larAvail,
+  };
 }
 
 /* ─── POST handler ─── */
 
 export async function POST(req: Request) {
   try {
-    const body: DemandaBody = await req.json();
-    const { titulo, tipos, descricao, prazo, solicitante } = body;
-
-    if (!titulo || !tipos?.length || !descricao || !prazo || !solicitante) {
-      return NextResponse.json({ error: "Campos obrigatórios faltando" }, { status: 400 });
-    }
+    const body: NovaDemandaBody = await req.json();
+    const { mode, nomeTask, area, areaOutros, tipos, estaticos, videos,
+            sobreOQue, pedidoResumido, mensagem, prazo,
+            solicitanteNome, solicitanteEmail } = body;
 
     const base    = JIRA_BASE();
     const auth    = JIRA_AUTH();
     const project = PROJECT();
 
-    // Fetch each team member's current pipeline (capacity-aware scheduling)
-    const pipeline = await fetchPipeline(base, auth, project);
-    const plans    = planSubtasks(tipos, descricao, prazo, pipeline);
+    // ── VALIDATE mode ────────────────────────────────────────────────────
+    if (mode === "validate") {
+      // Step 1: briefing quality
+      try {
+        const check = await validateBriefing(body);
+        if (!check.ok && check.questions?.length) {
+          return NextResponse.json({ status: "needs_clarification", questions: check.questions });
+        }
+      } catch { /* fail-safe: continue */ }
 
-    // Look up reporter account (by solicitante name) and assignee accounts in parallel
-    const [reporterAccountId, ...assigneeAccountIds] = await Promise.all([
-      findAccountId(base, auth, solicitante),
-      ...plans.map((p) => findAccountId(base, auth, p.person)),
+      // Step 2: deadline viability
+      try {
+        const pipeline  = await fetchPipeline(base, auth, project);
+        const viability = await checkViability(body, pipeline);
+        if (!viability.viable) {
+          return NextResponse.json({
+            status: "deadline_issue",
+            min_date:           viability.min_date,
+            min_days:           viability.min_days,
+            hours_needed:       viability.hours_needed,
+            capacity_available: viability.capacity_available,
+          });
+        }
+      } catch { /* fail-safe: continue */ }
+
+      return NextResponse.json({ status: "ok" });
+    }
+
+    // ── CREATE / FORCE_CREATE mode ────────────────────────────────────────
+    const forceUnassigned = mode === "force_create";
+    const areaLabel = area === "Outros" ? (areaOutros || "Outros") : area;
+
+    // Fetch pipeline for scheduler (only needed for normal create)
+    const pipeline = forceUnassigned ? null : await fetchPipeline(base, auth, project).catch(() => null);
+    const plans = pipeline
+      ? planSubtasks(tipos, `${sobreOQue}. ${pedidoResumido}`, prazo, pipeline)
+      : [];
+
+    // Look up reporter + all assignees in parallel
+    const thaisHint = "thais.boaventura";
+    const [reporterAccountId, thaisAccountId, ...assigneeIds] = await Promise.all([
+      findAccountId(base, auth, solicitanteNome),
+      findAccountId(base, auth, thaisHint),
+      ...plans.map(p => findAccountId(base, auth, p.person)),
     ]);
 
     // Build parent description
-    const fullDesc = [
-      `Solicitante: ${solicitante}`,
+    const descLines = [
+      `Solicitante: ${solicitanteNome} <${solicitanteEmail}>`,
+      `Área: ${areaLabel}`,
       `Tipos: ${tipos.join(", ")}`,
-      `Prazo: ${prazo}`,
+      `Estáticos: ${estaticos}  |  Vídeos: ${videos}`,
+      body.dimensoesEstaticos ? `Dimensões estáticos: ${body.dimensoesEstaticos}` : null,
+      body.dimensoesVideos    ? `Dimensões vídeos: ${body.dimensoesVideos}` : null,
+      body.duracaoVideos      ? `Duração vídeos: ${body.duracaoVideos}` : null,
       "",
-      descricao,
-    ].join("\n");
+      `Sobre: ${sobreOQue}`,
+      `Pedido: ${pedidoResumido}`,
+      `Mensagem: ${mensagem}`,
+      `Prazo: ${prazo}`,
+    ].filter(l => l !== null).join("\n");
 
-    // Create parent task (with reporter = solicitante)
-    const parentIssue = await createJiraIssue(
+    // Create parent task
+    const parentAssignee = forceUnassigned ? thaisAccountId : null;
+    const parentIssue    = await createJiraIssue(
       base, auth, project,
-      titulo,
-      fullDesc,
+      nomeTask,
+      descLines,
       prazo,
-      null,            // no assignee on parent
-      reporterAccountId
+      parentAssignee,
+      reporterAccountId,
     );
     const issueKey = parentIssue?.key ?? null;
-
-    // Set Country = Brasil on parent
     if (issueKey) {
       try { await forceSetCountry(base, auth, issueKey); } catch { /* non-fatal */ }
+
+      // Try to set OWNER field (area) via PUT if configured
+      const ownerField = process.env.JIRA_OWNER_FIELD?.trim();
+      if (ownerField) {
+        try {
+          await fetch(`${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`, {
+            method: "PUT",
+            headers: { Authorization: `Basic ${auth}`, Accept: "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({ fields: { [ownerField]: areaLabel } }),
+          });
+        } catch { /* non-fatal */ }
+      }
     }
 
-    const jiraBase  = parentIssue?.self ? parentIssue.self.split("/rest/")[0] : base.replace(/\/$/, "");
-    const jiraLink  = issueKey ? `${jiraBase}/browse/${issueKey}` : null;
+    const jiraBase = parentIssue?.self ? parentIssue.self.split("/rest/")[0] : base.replace(/\/$/, "");
+    const jiraLink = issueKey ? `${jiraBase}/browse/${issueKey}` : null;
 
-    // Create subtasks sequentially (Jira can be flaky with rapid parallel subtask creation)
+    // Force-create: subtasks unassigned, Slack alert
+    if (forceUnassigned) {
+      const subtaskResults: SubtaskResult[] = [];
+      if (issueKey) {
+        // Create subtasks for the relevant types, no assignee, deadline = prazo
+        const basicPlans = planSubtasks(tipos, `${sobreOQue}. ${pedidoResumido}`, prazo, {
+          eduardo: { daily: new Map() },
+          larissa: { daily: new Map() },
+          joao:    { daily: new Map() },
+          beatriz: { daily: new Map() },
+          rafa:    { daily: new Map() },
+        });
+        for (const plan of basicPlans) {
+          const st = await createJiraIssue(base, auth, project,
+            `${nomeTask} | ${plan.label}`,
+            `Subtask de ${plan.label} — prazo: ${plan.deadline}`,
+            plan.deadline, null, null, issueKey
+          );
+          const stKey = st?.key ?? null;
+          if (stKey) { try { await forceSetCountry(base, auth, stKey); } catch { /* */ } }
+          subtaskResults.push({ label: plan.label, assignee: "—", deadline: plan.deadline, hours: plan.hours, key: stKey });
+        }
+      }
+
+      await sendSlackAlert(
+        `⚠️ *Prazo impossível — ${nomeTask}*\n` +
+        `Solicitante: ${solicitanteNome} | ${solicitanteEmail}\n` +
+        `Task criada mas NÃO distribuída — prazo não cobre o volume.\n` +
+        `🔗 ${jiraLink}`
+      );
+
+      return NextResponse.json({
+        status: "created_unassigned",
+        issueKey,
+        jiraLink,
+        reason: "deadline_impossible",
+      });
+    }
+
+    // Normal create: subtasks with scheduler deadlines + assignees
     const subtaskResults: SubtaskResult[] = [];
     if (issueKey) {
       for (let i = 0; i < plans.length; i++) {
         const plan      = plans[i];
-        const accountId = assigneeAccountIds[i] ?? null;
-        const stSummary = `${titulo} | ${plan.label}`;
-
-        const st = await createJiraIssue(
-          base, auth, project,
-          stSummary,
+        const accountId = assigneeIds[i] ?? null;
+        const st = await createJiraIssue(base, auth, project,
+          `${nomeTask} | ${plan.label}`,
           `Subtask de ${plan.label} — estimativa: ${plan.hours}h — prazo: ${plan.deadline}`,
-          plan.deadline,
-          accountId,
-          null,        // no reporter on subtasks
-          issueKey
+          plan.deadline, accountId, null, issueKey
         );
         const stKey = st?.key ?? null;
-
-        // Set Country = Brasil on each subtask
-        if (stKey) {
-          try { await forceSetCountry(base, auth, stKey); } catch { /* non-fatal */ }
-        }
-
-        subtaskResults.push({
-          label:    plan.label,
-          assignee: plan.assignee,
-          deadline: plan.deadline,
-          hours:    plan.hours,
-          key:      stKey,
-        });
+        if (stKey) { try { await forceSetCountry(base, auth, stKey); } catch { /* */ } }
+        subtaskResults.push({ label: plan.label, assignee: plan.assignee, deadline: plan.deadline, hours: plan.hours, key: stKey });
       }
     }
 
-    // Slack alert
-    const workDays    = countWorkDays(new Date(), parseLocalDate(prazo));
-    const subtaskLines = subtaskResults
-      .map((s) => `  • ${titulo} | ${s.label} → ${s.assignee} (${s.deadline})`)
-      .join("\n");
+    const workDays     = countWorkDays(new Date(), parseLocalDate(prazo));
+    const subtaskLines = subtaskResults.map(s => `  • ${nomeTask} | ${s.label} → ${s.assignee} (${s.deadline})`).join("\n");
 
     await sendSlackAlert([
-      `🗂️ *Nova demanda: ${titulo}*`,
-      `Solicitante: ${solicitante}`,
+      `🗂️ *Nova demanda: ${nomeTask}*`,
+      `Área: ${areaLabel} | Solicitante: ${solicitanteNome}`,
       `Prazo: ${prazo} (${workDays} dias úteis)`,
-      `Subtasks:\n${subtaskLines}`,
+      subtaskLines,
       `🔗 ${jiraLink}`,
     ].join("\n"));
 
     return NextResponse.json({
-      success:  true,
+      status:   "created",
       issueKey,
       jiraLink,
       subtasks: subtaskResults,
     });
+
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[nova-demanda]", msg);

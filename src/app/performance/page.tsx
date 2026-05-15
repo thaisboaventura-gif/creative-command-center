@@ -77,6 +77,34 @@ function shortDate(d: Date) { return `${d.getDate()}/${d.getMonth() + 1}`; }
 
 /* ─── Gantt helpers ─── */
 
+/** Daily capacity per team member (hours) */
+const PERSON_CAP: Record<string, number> = {
+  eduardo: 13.5,
+  larissa: 13.5,
+  joão: 5.5,
+  joao: 5.5,
+  beatriz: 5.5,
+  rafa: 8,
+};
+
+function normFirst(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ")[0];
+}
+
+function personCapacity(displayName: string): number {
+  return PERSON_CAP[normFirst(displayName)] ?? 5.5;
+}
+
+function subWorkDays(date: Date, n: number): Date {
+  const r = new Date(date);
+  let i = 0;
+  while (i < n) {
+    r.setDate(r.getDate() - 1);
+    if (r.getDay() !== 0 && r.getDay() !== 6) i++;
+  }
+  return r;
+}
+
 function projectColor(title: string): string {
   const project = title.split("|")[0].split("—")[0].trim().split(" ").slice(0, 3).join(" ");
   let hash = 0;
@@ -94,15 +122,16 @@ function darkenHex(hex: string, factor: number): string {
 }
 
 interface GanttBar {
-  startCol: number;    // 1-based
-  endCol: number;      // 1-based, inclusive (the due-date column)
+  startCol: number;      // 1-based
+  endCol: number;        // 1-based, inclusive (the due-date column)
+  execStartCol: number;  // 1-based — where execution begins (before = "No pipeline")
   overdue: boolean;
   isDone: boolean;
   isWaiting: boolean;
   isDueToday: boolean;
   startsBefore: boolean;
   color: string;
-  dueLabel: string;    // "18/05" — shown inside the deadline cell
+  dueLabel: string;      // "18/05" — shown inside the deadline cell
 }
 
 function calcBar(
@@ -110,12 +139,13 @@ function calcBar(
   createdAt: string,
   status: string,
   days: Date[],
-  title: string
+  title: string,
+  estimatedHours?: number,
+  assignee?: string,
 ): GanttBar | null {
   if (!dueDate) return null;
 
   const now     = new Date(); now.setHours(0, 0, 0, 0);
-  // Use parseLocalDate to avoid UTC-offset off-by-one
   const due     = parseLocalDate(dueDate);
   const created = parseLocalDate(createdAt);
   const first   = new Date(days[0]);             first.setHours(0, 0, 0, 0);
@@ -134,8 +164,6 @@ function calcBar(
   }
   if (startCol === -1) return null;
 
-  // endCol: last displayed day that is <= due date (inclusive).
-  // Iterates backward so we get the rightmost match.
   let endCol = -1;
   for (let i = days.length - 1; i >= 0; i--) {
     const d = new Date(days[i]); d.setHours(0, 0, 0, 0);
@@ -144,20 +172,43 @@ function calcBar(
   if (endCol === -1) endCol = startCol;
   if (endCol < startCol) endCol = startCol;
 
+  // ── Execution start (Jeito A) ─────────────────────────────────────────
+  // Go backwards from dueDate by the number of workdays needed.
+  // Before execStart = "No pipeline" (task waiting to be picked up).
+  let execStartCol = startCol + 1; // default: start executing from first visible day
+  if (estimatedHours !== undefined && assignee) {
+    const cap        = personCapacity(assignee);
+    const daysNeeded = Math.max(1, Math.ceil(estimatedHours / cap));
+    const execDate   = subWorkDays(due, daysNeeded - 1);
+    execDate.setHours(0, 0, 0, 0);
+
+    if (execDate <= first) {
+      execStartCol = startCol + 1; // already executing before window
+    } else {
+      let found = false;
+      for (let i = 0; i < days.length; i++) {
+        const d = new Date(days[i]); d.setHours(0, 0, 0, 0);
+        if (d >= execDate) { execStartCol = i + 1; found = true; break; }
+      }
+      if (!found) execStartCol = endCol + 1; // execution outside visible window
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   const isDone     = status === "done";
   const isWaiting  = status === "in_review";
   const overdue    = !isDone && due < now;
   const isDueToday = !isDone && due.getTime() === now.getTime();
   const color      = isDone     ? "#9ca3af"
-                   : overdue    ? "#fecaca"   // light red — not alarming, text shows "Em atraso"
-                   : isWaiting  ? "#fbcfe8"   // light pink — distinct from overdue
+                   : overdue    ? "#fecaca"
+                   : isWaiting  ? "#fbcfe8"
                    : isDueToday ? "#fbbf24"
                    : projectColor(title);
 
   const dueLabel = `${due.getDate()}/${due.getMonth() + 1}`;
 
   return {
-    startCol: startCol + 1, endCol: endCol + 1,
+    startCol: startCol + 1, endCol: endCol + 1, execStartCol,
     overdue, isDone, isWaiting, isDueToday, startsBefore, color, dueLabel,
   };
 }
@@ -333,8 +384,8 @@ export default function PerformanceDashboard() {
     return d >= windowStart && d <= windowEnd;
   }
 
-  // Entregas concluídas: only from May of current year onwards
-  const sectionStart = new Date(new Date().getFullYear(), 4, 1); // May 1
+  // Entregas concluídas: from Jan 1 of current year (same window as Jira query)
+  const sectionStart = new Date(new Date().getFullYear(), 0, 1); // Jan 1
 
   const visible       = tasks.filter((t) => !hidden.has(t.key));
 
@@ -467,7 +518,11 @@ export default function PerformanceDashboard() {
       return `${latest.getFullYear()}-${String(latest.getMonth() + 1).padStart(2, "0")}-${String(latest.getDate()).padStart(2, "0")}`;
     })();
 
-    const bar = calcBar(effectiveDueDate, task.createdAt, task.status, days, task.title);
+    const bar = calcBar(
+      effectiveDueDate, task.createdAt, task.status, days, task.title,
+      task.estimatedHours,
+      (task as PerfTask).assignee ?? (task as PerfSubtask).assignee,
+    );
 
     // Parent with sub-deadlines gets a darker bar
     const barColor = bar
@@ -532,12 +587,15 @@ export default function PerformanceDashboard() {
 
         {/* ── Day cells ── */}
         {days.map((d, i) => {
-          const cellN     = i + 1;
-          const isToday   = sameDay(d, today);
-          const inRange   = bar ? cellN >= bar.startCol && cellN <= bar.endCol : false;
-          const isStart   = bar ? cellN === bar.startCol : false;
-          const isEnd     = bar ? cellN === bar.endCol   : false;
-          const isDueCell = isEnd && inRange;
+          const cellN       = i + 1;
+          const isToday     = sameDay(d, today);
+          const inRange     = bar ? cellN >= bar.startCol && cellN <= bar.endCol : false;
+          const isPipeline  = bar ? inRange && cellN < bar.execStartCol : false;
+          const isExec      = bar ? inRange && cellN >= bar.execStartCol : false;
+          const isStart     = bar ? cellN === bar.startCol : false;
+          const isEnd       = bar ? cellN === bar.endCol   : false;
+          const isDueCell   = isEnd && inRange;
+          const isPipeStart = isPipeline && cellN === bar!.startCol;
 
           // Subtask deadlines that fall on this day (parent rows only)
           const dayMarkers = (isParent && inRange)
@@ -553,10 +611,16 @@ export default function PerformanceDashboard() {
             ? "2px solid #9ca3af"
             : "1px dashed #d1d5db";
 
-          const barRadius = !bar ? "0"
+          // Border radius — only round the corners at the edge of the exec phase
+          const execBarRadius = !bar ? "0"
             : isStart && !bar.startsBefore && isEnd ? "8px"
             : isStart && !bar.startsBefore          ? "8px 0 0 8px"
             : isEnd                                 ? "0 8px 8px 0"
+            : "0";
+
+          // For pipeline portion, use the same rounding at start
+          const pipeBarRadius = !bar ? "0"
+            : isStart && !bar.startsBefore ? "8px 0 0 8px"
             : "0";
 
           return (
@@ -570,15 +634,38 @@ export default function PerformanceDashboard() {
                 overflow: "visible",
               }}
             >
-              {/* Colored bar */}
-              {inRange && (
+              {/* Pipeline phase — translucent bar */}
+              {isPipeline && (
+                <div style={{
+                  position: "absolute",
+                  top: 5, bottom: 5, left: 0, right: 0,
+                  background: barColor!,
+                  opacity: 0.13,
+                  borderRadius: pipeBarRadius,
+                }} />
+              )}
+
+              {/* "No pipeline" label — only in the first pipeline cell */}
+              {isPipeStart && (
+                <span style={{
+                  position: "absolute",
+                  left: 4, top: "50%", transform: "translateY(-50%)",
+                  fontSize: 8, fontWeight: 500, color: "#9ca3af",
+                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none",
+                }}>
+                  No pipeline
+                </span>
+              )}
+
+              {/* Execution phase — full-color bar */}
+              {isExec && (
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
                   background: barColor!,
                   filter: isDueCell && !hasSubDeadlines ? "brightness(0.78)" : undefined,
                   opacity: bar!.isDone ? 0.45 : 1,
-                  borderRadius: barRadius,
+                  borderRadius: execBarRadius,
                 }} />
               )}
 
@@ -588,7 +675,6 @@ export default function PerformanceDashboard() {
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
-                  // Overdue bar is light — use dark red text. Others use white.
                   color: bar!.overdue ? "#b91c1c" : "rgba(255,255,255,0.95)",
                   textShadow: bar!.overdue ? "none" : "0 1px 2px rgba(0,0,0,.35)",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
@@ -833,8 +919,7 @@ export default function PerformanceDashboard() {
       </div>
 
       {/* ── Entregas concluídas ── */}
-      {(doneTasks.length > 0 || deliveredSearch) && (
-        <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16, overflow: "hidden" }}>
+      <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16, overflow: "hidden" }}>
 
           {/* Section header + search */}
           <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -915,7 +1000,6 @@ export default function PerformanceDashboard() {
             );
           })}
         </div>
-      )}
 
       {/* ── Month summary ── */}
       {view === "month" && (
