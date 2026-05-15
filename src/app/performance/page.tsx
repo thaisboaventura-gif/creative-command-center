@@ -185,8 +185,11 @@ function saveSet(key: string, s: Set<string>) {
 /* ─── Delivery helpers ─── */
 
 function isFullyDone(task: PerfTask): boolean {
-  if (task.subtasks.length === 0) return task.status === "done";
-  return task.subtasks.every((st) => st.status === "done");
+  // Parent marked Done in Jira → always delivered
+  if (task.status === "done") return true;
+  // Parent still open but all subtasks are done → also delivered
+  if (task.subtasks.length > 0) return task.subtasks.every((st) => st.status === "done");
+  return false;
 }
 
 /** Returns the latest subtask dueDate, falling back to the parent's dueDate. */

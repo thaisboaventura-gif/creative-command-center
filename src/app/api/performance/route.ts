@@ -152,9 +152,10 @@ export async function GET(req: Request) {
     }
 
     // Main query: reporter in performance team OR assignee = eduardo
+    // Include Done tasks (last 90 days) so the frontend can show the "Entregas" section.
     const reporters = PERFORMANCE_REPORTERS.join(", ");
     const assignees = PERFORMANCE_ASSIGNEES.join(", ");
-    const jql = `project = ${project} AND status != Done AND (reporter in (${reporters}) OR assignee in (${assignees})) ORDER BY updated DESC`;
+    const jql = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
 
     const raw = await fetchIssues(base, auth, jql);
 
