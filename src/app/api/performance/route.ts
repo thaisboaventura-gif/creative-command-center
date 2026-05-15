@@ -151,13 +151,25 @@ export async function GET(req: Request) {
       return NextResponse.json({ task });
     }
 
-    // Main query: reporter in performance team OR assignee = eduardo
-    // Include Done tasks (last 90 days) so the frontend can show the "Entregas" section.
     const reporters = PERFORMANCE_REPORTERS.join(", ");
     const assignees = PERFORMANCE_ASSIGNEES.join(", ");
-    const jql = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
 
-    const raw = await fetchIssues(base, auth, jql);
+    // Query 1: active tasks for the performance team (any status)
+    const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
+
+    // Query 2: ALL Done tasks from the current year — broader reporter filter so tasks
+    // created by PMMs / other teams but delivered by performance also appear.
+    // statusCategory = Done is language-independent (catches Concluído, Entregue, etc.)
+    const currentYear = new Date().getFullYear();
+    const jql2 = `project = ${project} AND statusCategory = Done AND updated >= "${currentYear}-01-01" ORDER BY updated DESC`;
+
+    // Run both queries in parallel, then merge (deduplicate by key)
+    const [raw1, raw2] = await Promise.all([
+      fetchIssues(base, auth, jql1),
+      fetchIssues(base, auth, jql2),
+    ]);
+    const seen = new Set(raw1.map((i) => i.key));
+    const raw  = [...raw1, ...raw2.filter((i) => !seen.has(i.key))];
 
     // Filter by Country = Brasil
     const filtered = raw.filter((i) => isBrasil(i.fields));
