@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import type { PerfTask, PerfSubtask } from "@/app/api/performance/route";
 
 /* ─── Types ─── */
@@ -81,6 +81,15 @@ function projectColor(title: string): string {
   let hash = 0;
   for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
   return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
+}
+
+/** Darkens a hex color by `factor` (0–1). factor=0.3 → 30% darker. */
+function darkenHex(hex: string, factor: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const r = Math.max(0, Math.round(((n >> 16) & 0xff) * (1 - factor)));
+  const g = Math.max(0, Math.round(((n >>  8) & 0xff) * (1 - factor)));
+  const b = Math.max(0, Math.round(( n        & 0xff) * (1 - factor)));
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
 interface GanttBar {
@@ -186,6 +195,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/* ─── Types ─── */
+
+interface TooltipState {
+  title: string;
+  dateLabel: string;
+  link: string;
+  x: number;
+  y: number;
+}
+
 /* ─── Main component ─── */
 
 export default function PerformanceDashboard() {
@@ -198,6 +217,8 @@ export default function PerformanceDashboard() {
   const [addInput,   setAddInput]   = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState("");
+  const [tooltip,    setTooltip]    = useState<TooltipState | null>(null);
+  const tooltipTimer                = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load persisted state from localStorage on mount
   useEffect(() => {
@@ -249,6 +270,21 @@ export default function PerformanceDashboard() {
     else next.add(key);
     setCollapsed(next);
     saveSet(COLLAPSED_KEY, next);
+  }
+
+  /* ── Tooltip helpers ── */
+
+  function showTooltip(data: TooltipState) {
+    if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+    setTooltip(data);
+  }
+
+  function hideTooltip() {
+    tooltipTimer.current = setTimeout(() => setTooltip(null), 160);
+  }
+
+  function cancelHide() {
+    if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
   }
 
   async function handleAdd() {
@@ -303,10 +339,31 @@ export default function PerformanceDashboard() {
   /* ── TaskRow ── */
 
   function TaskRow({ task, indent = false }: { task: PerfTask | PerfSubtask; indent?: boolean }) {
-    const bar      = calcBar(task.dueDate, task.createdAt, task.status, days, task.title);
-    const isParent = !indent;
-    const taskKey  = (task as PerfTask).key;
+    const isParent    = !indent;
+    const taskKey     = (task as PerfTask).key;
     const isCollapsed = isParent && collapsed.has(taskKey);
+
+    // For parent tasks: if any subtask has a dueDate, extend bar to the latest one
+    const subtasks = isParent ? ((task as PerfTask).subtasks ?? []) : [];
+    const subWithDue = subtasks.filter((st) => st.dueDate);
+    const hasSubDeadlines = subWithDue.length > 0;
+
+    const effectiveDueDate: string | null = (() => {
+      if (!hasSubDeadlines) return task.dueDate;
+      const latest = subWithDue.reduce<Date | null>((max, st) => {
+        const d = parseLocalDate(st.dueDate!);
+        return !max || d > max ? d : max;
+      }, null);
+      if (!latest) return task.dueDate;
+      return `${latest.getFullYear()}-${String(latest.getMonth() + 1).padStart(2, "0")}-${String(latest.getDate()).padStart(2, "0")}`;
+    })();
+
+    const bar = calcBar(effectiveDueDate, task.createdAt, task.status, days, task.title);
+
+    // Parent with sub-deadlines gets a darker bar
+    const barColor = bar
+      ? (hasSubDeadlines ? darkenHex(bar.color, 0.28) : bar.color)
+      : null;
 
     return (
       <div style={{
@@ -321,7 +378,6 @@ export default function PerformanceDashboard() {
           padding: indent ? "0 8px 0 26px" : "0 6px 0 8px",
           display: "flex", alignItems: "center", gap: 4, minWidth: 0,
         }}>
-          {/* Collapse toggle — parent rows only */}
           {isParent && (
             <button
               onClick={() => toggleCollapsed(taskKey)}
@@ -367,25 +423,28 @@ export default function PerformanceDashboard() {
 
         {/* ── Day cells ── */}
         {days.map((d, i) => {
-          const cellN     = i + 1;                                       // 1-based
+          const cellN     = i + 1;
           const isToday   = sameDay(d, today);
           const inRange   = bar ? cellN >= bar.startCol && cellN <= bar.endCol : false;
           const isStart   = bar ? cellN === bar.startCol : false;
           const isEnd     = bar ? cellN === bar.endCol   : false;
           const isDueCell = isEnd && inRange;
 
-          // Vertical separator: solid on today/deadline col, dashed elsewhere
+          // Subtask deadlines that fall on this day (parent rows only)
+          const dayMarkers = (isParent && inRange)
+            ? subWithDue.filter((st) => sameDay(parseLocalDate(st.dueDate!), d))
+            : [];
+
           const borderRight = isToday
             ? "1px solid #c4b5fd"
             : isDueCell
-            ? `1px solid ${bar!.color}`
+            ? `1px solid ${barColor}`
             : "1px dashed #d1d5db";
 
-          // Bar border-radius (applied to inner bar div)
-          const barRadius =
-            isStart && !bar!.startsBefore && isEnd ? "8px"
-            : isStart && !bar!.startsBefore        ? "8px 0 0 8px"
-            : isEnd                                ? "0 8px 8px 0"
+          const barRadius = !bar ? "0"
+            : isStart && !bar.startsBefore && isEnd ? "8px"
+            : isStart && !bar.startsBefore          ? "8px 0 0 8px"
+            : isEnd                                 ? "0 8px 8px 0"
             : "0";
 
           return (
@@ -396,7 +455,7 @@ export default function PerformanceDashboard() {
                 borderRight,
                 minHeight: 36,
                 background: !inRange && isToday ? "#f5f3ff" : "transparent",
-                overflow: "hidden",
+                overflow: "visible",
               }}
             >
               {/* Colored bar */}
@@ -404,28 +463,61 @@ export default function PerformanceDashboard() {
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
-                  background: bar!.color,
-                  // Deadline cell: slightly darker to make it pop
-                  filter: isDueCell ? "brightness(0.78)" : undefined,
+                  background: barColor!,
+                  filter: isDueCell && !hasSubDeadlines ? "brightness(0.78)" : undefined,
                   opacity: bar!.isDone ? 0.45 : 1,
                   borderRadius: barRadius,
                 }} />
               )}
 
-              {/* Deadline label: "📦 DD/MM" right-aligned inside the last bar cell */}
-              {isDueCell && (
+              {/* "Deadline: DD/MM" label — only on own due date (no subtask markers) */}
+              {isDueCell && !hasSubDeadlines && (
                 <span style={{
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
                   color: "rgba(255,255,255,0.95)",
                   textShadow: "0 1px 2px rgba(0,0,0,.35)",
-                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none",
-                  lineHeight: 1,
+                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
                 }}>
                   Deadline: {bar!.dueLabel}
                 </span>
               )}
+
+              {/* 📦 subtask deadline markers */}
+              {dayMarkers.map((st) => {
+                const stDateLabel = (() => {
+                  const dt = parseLocalDate(st.dueDate!);
+                  return `${dt.getDate()}/${dt.getMonth() + 1}`;
+                })();
+                return (
+                  <span
+                    key={st.key}
+                    onMouseEnter={(e) => {
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      showTooltip({
+                        title: st.title,
+                        dateLabel: stDateLabel,
+                        link: `${JIRA_BASE}/${st.key}`,
+                        x: rect.left + rect.width / 2,
+                        y: rect.bottom + 6,
+                      });
+                    }}
+                    onMouseLeave={hideTooltip}
+                    style={{
+                      position: "absolute",
+                      top: "50%", left: "50%",
+                      transform: "translate(-50%, -50%)",
+                      fontSize: 13, lineHeight: 1,
+                      cursor: "pointer", zIndex: 3,
+                      userSelect: "none",
+                      filter: "drop-shadow(0 1px 1px rgba(0,0,0,.3))",
+                    }}
+                  >
+                    📦
+                  </span>
+                );
+              })}
             </div>
           );
         })}
@@ -451,6 +543,45 @@ export default function PerformanceDashboard() {
     : days[0].toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   return (
+    <>
+    {/* ── Subtask deadline tooltip ── */}
+    {tooltip && (
+      <a
+        href={tooltip.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        onMouseEnter={cancelHide}
+        onMouseLeave={hideTooltip}
+        style={{
+          position: "fixed",
+          left: tooltip.x,
+          top: tooltip.y,
+          transform: "translateX(-50%)",
+          zIndex: 9999,
+          background: "#1f2937",
+          color: "white",
+          padding: "7px 11px",
+          borderRadius: 8,
+          fontSize: 11,
+          fontWeight: 500,
+          textDecoration: "none",
+          boxShadow: "0 4px 14px rgba(0,0,0,.28)",
+          whiteSpace: "nowrap",
+          pointerEvents: "all",
+          lineHeight: 1.5,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+        }}
+      >
+        <span style={{ fontWeight: 700, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+          {tooltip.title}
+        </span>
+        <span style={{ color: "#9ca3af", fontSize: 10 }}>
+          Entrega: {tooltip.dateLabel} &nbsp;↗
+        </span>
+      </a>
+    )}
     <Shell>
       {/* ── Page header ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
@@ -600,6 +731,7 @@ export default function PerformanceDashboard() {
         </div>
       )}
     </Shell>
+    </>
   );
 }
 
