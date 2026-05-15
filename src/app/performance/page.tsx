@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import type { PerfTask, PerfSubtask } from "@/app/api/performance/route";
 
 /* ─── Types ─── */
@@ -10,7 +10,8 @@ type LoadState = "loading" | "ok" | "err";
 
 /* ─── Constants ─── */
 
-const JIRA_BASE = "https://tiendanube.atlassian.net/browse";
+const JIRA_BASE  = "https://tiendanube.atlassian.net/browse";
+const LABEL_W    = 220; // px — task name column
 
 const PROJECT_PALETTE = [
   "#5b6cff", "#6dd49e", "#ee8094", "#fb923c",
@@ -26,6 +27,18 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 /* ─── Date helpers ─── */
+
+/**
+ * Parse "YYYY-MM-DD" as LOCAL midnight.
+ * new Date("YYYY-MM-DD") is UTC midnight — in UTC-3 that becomes the previous day
+ * at 21:00 local, causing off-by-one errors in bar rendering.
+ */
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
 
 function getWeekDays(offsetWeeks: number): Date[] {
   const now = new Date();
@@ -53,17 +66,12 @@ function getMonthDays(offsetMonths: number): Date[] {
 
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() &&
-         a.getMonth() === b.getMonth() &&
-         a.getDate() === b.getDate();
+         a.getMonth()    === b.getMonth()    &&
+         a.getDate()     === b.getDate();
 }
 
-function dayLabel(d: Date) {
-  return ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"][d.getDay()];
-}
-
-function shortDate(d: Date) {
-  return `${d.getDate()}/${d.getMonth() + 1}`;
-}
+function dayLabel(d: Date)  { return ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"][d.getDay()]; }
+function shortDate(d: Date) { return `${d.getDate()}/${d.getMonth() + 1}`; }
 
 /* ─── Gantt helpers ─── */
 
@@ -75,14 +83,15 @@ function projectColor(title: string): string {
 }
 
 interface GanttBar {
-  startCol: number;   // 1-based
-  endCol: number;     // 1-based
+  startCol: number;    // 1-based
+  endCol: number;      // 1-based, inclusive (the due-date column)
   overdue: boolean;
   isDone: boolean;
   isWaiting: boolean;
   isDueToday: boolean;
   startsBefore: boolean;
   color: string;
+  dueLabel: string;    // "18/05" — shown inside the deadline cell
 }
 
 function calcBar(
@@ -93,11 +102,13 @@ function calcBar(
   title: string
 ): GanttBar | null {
   if (!dueDate) return null;
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  const due = new Date(dueDate); due.setHours(0, 0, 0, 0);
-  const created = new Date(createdAt); created.setHours(0, 0, 0, 0);
-  const first = new Date(days[0]); first.setHours(0, 0, 0, 0);
-  const last = new Date(days[days.length - 1]); last.setHours(0, 0, 0, 0);
+
+  const now     = new Date(); now.setHours(0, 0, 0, 0);
+  // Use parseLocalDate to avoid UTC-offset off-by-one
+  const due     = parseLocalDate(dueDate);
+  const created = parseLocalDate(createdAt);
+  const first   = new Date(days[0]);             first.setHours(0, 0, 0, 0);
+  const last    = new Date(days[days.length - 1]); last.setHours(0, 0, 0, 0);
 
   if (due < first) return null;
   if (created > last) return null;
@@ -112,6 +123,8 @@ function calcBar(
   }
   if (startCol === -1) return null;
 
+  // endCol: last displayed day that is <= due date (inclusive).
+  // Iterates backward so we get the rightmost match.
   let endCol = -1;
   for (let i = days.length - 1; i >= 0; i--) {
     const d = new Date(days[i]); d.setHours(0, 0, 0, 0);
@@ -124,28 +137,34 @@ function calcBar(
   const isWaiting  = status === "in_review";
   const overdue    = !isDone && due < now;
   const isDueToday = !isDone && due.getTime() === now.getTime();
-  const color      = isDone    ? "#9ca3af"
-                   : isWaiting ? "#fca5a5"
-                   : overdue   ? "#ef4444"
+  const color      = isDone     ? "#9ca3af"
+                   : isWaiting  ? "#fca5a5"
+                   : overdue    ? "#ef4444"
                    : isDueToday ? "#fbbf24"
                    : projectColor(title);
 
-  return { startCol: startCol + 1, endCol: endCol + 1, overdue, isDone, isWaiting, isDueToday, startsBefore, color };
+  const dueLabel = `${due.getDate()}/${due.getMonth() + 1}`;
+
+  return {
+    startCol: startCol + 1, endCol: endCol + 1,
+    overdue, isDone, isWaiting, isDueToday, startsBefore, color, dueLabel,
+  };
 }
 
 /* ─── Storage helpers ─── */
 
-const HIDDEN_KEY = "perf_hidden_v1";
+const HIDDEN_KEY    = "perf_hidden_v1";
+const COLLAPSED_KEY = "perf_collapsed_v1";
 
-function loadHidden(): Set<string> {
+function loadSet(key: string): Set<string> {
   try {
-    const raw = localStorage.getItem(HIDDEN_KEY);
+    const raw = localStorage.getItem(key);
     return new Set(raw ? JSON.parse(raw) : []);
   } catch { return new Set(); }
 }
 
-function saveHidden(s: Set<string>) {
-  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...s])); } catch { /* noop */ }
+function saveSet(key: string, s: Set<string>) {
+  try { localStorage.setItem(key, JSON.stringify([...s])); } catch { /* noop */ }
 }
 
 /* ─── Sub-components ─── */
@@ -159,7 +178,8 @@ function StatusBadge({ status }: { status: string }) {
   };
   const c = colors[status] ?? colors.to_do;
   return (
-    <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: c.bg, color: c.color, whiteSpace: "nowrap" }}>
+    <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
+      background: c.bg, color: c.color, whiteSpace: "nowrap", flexShrink: 0 }}>
       {STATUS_LABEL[status] ?? status}
     </span>
   );
@@ -173,12 +193,16 @@ export default function PerformanceDashboard() {
   const [view,       setView]       = useState<View>("week");
   const [offset,     setOffset]     = useState(0);
   const [hidden,     setHidden]     = useState<Set<string>>(new Set());
+  const [collapsed,  setCollapsed]  = useState<Set<string>>(new Set());
   const [addInput,   setAddInput]   = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState("");
 
-  // Load hidden keys from localStorage on mount
-  useEffect(() => { setHidden(loadHidden()); }, []);
+  // Load persisted state from localStorage on mount
+  useEffect(() => {
+    setHidden(loadSet(HIDDEN_KEY));
+    setCollapsed(loadSet(COLLAPSED_KEY));
+  }, []);
 
   // Fetch tasks
   useEffect(() => {
@@ -192,22 +216,38 @@ export default function PerformanceDashboard() {
       .catch(() => setSrc("err"));
   }, []);
 
-  const days = view === "week" ? getWeekDays(offset) : getMonthDays(offset);
+  const days  = useMemo(
+    () => view === "week" ? getWeekDays(offset) : getMonthDays(offset),
+    [view, offset]
+  );
   const today = new Date();
 
-  // Visible tasks (hidden keys removed)
+  // CSS grid: task label column + N day columns, each filling available space (min 40px)
+  const GRID_COLS = `${LABEL_W}px repeat(${days.length}, minmax(40px, 1fr))`;
+
   const visible = tasks.filter((t) => !hidden.has(t.key));
+
+  /* ── Actions ── */
 
   function hideTask(key: string) {
     const next = new Set(hidden);
     next.add(key);
     setHidden(next);
-    saveHidden(next);
+    saveSet(HIDDEN_KEY, next);
   }
 
   function unhideAll() {
-    setHidden(new Set());
-    saveHidden(new Set());
+    const next = new Set<string>();
+    setHidden(next);
+    saveSet(HIDDEN_KEY, next);
+  }
+
+  function toggleCollapsed(key: string) {
+    const next = new Set(collapsed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setCollapsed(next);
+    saveSet(COLLAPSED_KEY, next);
   }
 
   async function handleAdd() {
@@ -222,11 +262,10 @@ export default function PerformanceDashboard() {
       const data = await res.json();
       if (!res.ok || data.error) { setAddError(data.error || "Não encontrada"); return; }
       setTasks((prev) => [data.task, ...prev]);
-      // Also remove from hidden if it was hidden before
       const next = new Set(hidden);
       next.delete(key);
       setHidden(next);
-      saveHidden(next);
+      saveSet(HIDDEN_KEY, next);
       setAddInput("");
     } catch {
       setAddError("Erro de conexão");
@@ -235,134 +274,165 @@ export default function PerformanceDashboard() {
     }
   }
 
-  // Month stats
-  const now = new Date(); now.setHours(0,0,0,0);
-  const monthStats = (() => {
+  /* ── Month stats ── */
+
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+
+  const monthStats = useMemo(() => {
     let statics = 0, videos = 0, delays = 0;
     const delayed: string[] = [];
     for (const t of visible) {
       const allItems = [t, ...t.subtasks];
       for (const item of allItems) {
         if (item.status === "done") {
-          const title = item.title.toLowerCase();
-          if (title.includes("motion") || title.includes("video") || title.includes("vídeo")) videos++;
+          const tl = item.title.toLowerCase();
+          if (tl.includes("motion") || tl.includes("video") || tl.includes("vídeo")) videos++;
           else statics++;
         }
         if (item.status !== "done" && item.dueDate) {
-          const due = new Date(item.dueDate); due.setHours(0,0,0,0);
+          const due = parseLocalDate(item.dueDate);
           if (due < now) { delays++; if (!delayed.includes(t.key)) delayed.push(t.key); }
         }
       }
     }
     return { statics, videos, delays, delayed };
-  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
-  // Column width for Gantt
-  const COL_W = view === "month" ? 36 : 120;
-  const LABEL_W = 280;
-  const GRID_COLS = `${LABEL_W}px repeat(${days.length}, ${COL_W}px)`;
-
-  const headerStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: GRID_COLS,
-    borderBottom: "1px solid #eef0f3",
-    position: "sticky",
-    top: 0,
-    background: "white",
-    zIndex: 10,
-  };
-
-  function renderBar(bar: GanttBar, days: Date[], colW: number) {
-    const span = bar.endCol - bar.startCol + 1;
-    return (
-      <div style={{
-        gridColumn: `${bar.startCol + 1} / span ${span}`,
-        gridRow: 1,
-        display: "flex",
-        alignItems: "center",
-        padding: "0 2px",
-      }}>
-        <div style={{
-          height: 16,
-          width: "100%",
-          borderRadius: bar.startsBefore ? "0 8px 8px 0" : 8,
-          background: bar.color,
-          opacity: bar.isDone ? 0.5 : 1,
-          minWidth: 8,
-        }} />
-      </div>
-    );
-  }
+  /* ── TaskRow ── */
 
   function TaskRow({ task, indent = false }: { task: PerfTask | PerfSubtask; indent?: boolean }) {
-    const bar = calcBar(task.dueDate, task.createdAt, task.status, days, task.title);
+    const bar      = calcBar(task.dueDate, task.createdAt, task.status, days, task.title);
     const isParent = !indent;
-    const key = (task as PerfTask).key;
+    const taskKey  = (task as PerfTask).key;
+    const isCollapsed = isParent && collapsed.has(taskKey);
 
     return (
       <div style={{
         display: "grid",
         gridTemplateColumns: GRID_COLS,
         borderBottom: "1px solid #f3f4f6",
-        minHeight: 38,
-        alignItems: "center",
+        minHeight: 36,
         background: indent ? "#fafafa" : "white",
       }}>
-        {/* Label cell */}
-        <div style={{ padding: indent ? "6px 8px 6px 28px" : "6px 8px 6px 12px", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        {/* ── Label cell ── */}
+        <div style={{
+          padding: indent ? "0 8px 0 26px" : "0 6px 0 8px",
+          display: "flex", alignItems: "center", gap: 4, minWidth: 0,
+        }}>
+          {/* Collapse toggle — parent rows only */}
+          {isParent && (
+            <button
+              onClick={() => toggleCollapsed(taskKey)}
+              title={isCollapsed ? "Expandir subtasks" : "Recolher subtasks"}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#9ca3af", fontSize: 8, padding: "1px 2px",
+                flexShrink: 0, lineHeight: 1, userSelect: "none",
+              }}
+            >
+              {isCollapsed ? "▶" : "▼"}
+            </button>
+          )}
           {indent && <span style={{ color: "#d1d5db", fontSize: 10, flexShrink: 0 }}>↳</span>}
+
           <a
-            href={`${JIRA_BASE}/${(task as PerfTask).key || key}`}
+            href={`${JIRA_BASE}/${taskKey}`}
             target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: indent ? 11 : 12, color: "#374151", fontWeight: isParent ? 600 : 400, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}
             title={task.title}
+            style={{
+              fontSize: indent ? 11 : 12, color: "#374151",
+              fontWeight: isParent ? 600 : 400, textDecoration: "none",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+            }}
           >
             {task.title}
           </a>
+
           <StatusBadge status={task.status} />
+
           {isParent && (
             <button
-              onClick={() => hideTask((task as PerfTask).key)}
+              onClick={() => hideTask(taskKey)}
               title="Ocultar task"
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#d1d5db", fontSize: 14, padding: "2px 4px", flexShrink: 0, lineHeight: 1 }}
-            >🗑</button>
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#d1d5db", fontSize: 11, padding: "1px 3px",
+                flexShrink: 0, lineHeight: 1,
+              }}
+            >✕</button>
           )}
         </div>
 
-        {/* Bar cells — span the day columns via a sub-grid trick */}
-        {bar ? (
-          Array.from({ length: days.length }, (_, i) => {
-            const isStart = i + 1 === bar.startCol;
-            const isEnd   = i + 1 === bar.endCol;
-            const inRange = i + 1 >= bar.startCol && i + 1 <= bar.endCol;
-            const isToday = sameDay(days[i], today);
+        {/* ── Day cells ── */}
+        {days.map((d, i) => {
+          const cellN     = i + 1;                                       // 1-based
+          const isToday   = sameDay(d, today);
+          const inRange   = bar ? cellN >= bar.startCol && cellN <= bar.endCol : false;
+          const isStart   = bar ? cellN === bar.startCol : false;
+          const isEnd     = bar ? cellN === bar.endCol   : false;
+          const isDueCell = isEnd && inRange;
 
-            return (
-              <div key={i} style={{
-                height: "100%",
-                background: inRange ? bar.color : "transparent",
-                opacity: bar.isDone ? 0.45 : 1,
-                borderRadius: isStart && !bar.startsBefore && isEnd ? 8
-                            : isStart && !bar.startsBefore ? "8px 0 0 8px"
-                            : isEnd ? "0 8px 8px 0"
-                            : 0,
-                borderLeft: isToday ? "2px solid #7c3aed" : undefined,
-                minHeight: 24,
-                alignSelf: "center",
-                margin: "0",
-              }} />
-            );
-          })
-        ) : (
-          <>
-            {days.map((d, i) => (
-              <div key={i} style={{ height: "100%", background: sameDay(d, today) ? "#f5f3ff" : "transparent" }} />
-            ))}
-          </>
-        )}
+          // Vertical separator: solid on today/deadline col, dashed elsewhere
+          const borderRight = isToday
+            ? "1px solid #c4b5fd"
+            : isDueCell
+            ? `1px solid ${bar!.color}`
+            : "1px dashed #d1d5db";
+
+          // Bar border-radius (applied to inner bar div)
+          const barRadius =
+            isStart && !bar!.startsBefore && isEnd ? "8px"
+            : isStart && !bar!.startsBefore        ? "8px 0 0 8px"
+            : isEnd                                ? "0 8px 8px 0"
+            : "0";
+
+          return (
+            <div
+              key={i}
+              style={{
+                position: "relative",
+                borderRight,
+                minHeight: 36,
+                background: !inRange && isToday ? "#f5f3ff" : "transparent",
+                overflow: "hidden",
+              }}
+            >
+              {/* Colored bar */}
+              {inRange && (
+                <div style={{
+                  position: "absolute",
+                  top: 5, bottom: 5, left: 0, right: 0,
+                  background: bar!.color,
+                  // Deadline cell: slightly darker to make it pop
+                  filter: isDueCell ? "brightness(0.78)" : undefined,
+                  opacity: bar!.isDone ? 0.45 : 1,
+                  borderRadius: barRadius,
+                }} />
+              )}
+
+              {/* Deadline label: "📦 DD/MM" right-aligned inside the last bar cell */}
+              {isDueCell && (
+                <span style={{
+                  position: "absolute",
+                  right: 4, top: "50%", transform: "translateY(-50%)",
+                  fontSize: 9, fontWeight: 700,
+                  color: "rgba(255,255,255,0.95)",
+                  textShadow: "0 1px 2px rgba(0,0,0,.35)",
+                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none",
+                  lineHeight: 1,
+                }}>
+                  📦 {bar!.dueLabel}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
+
+  /* ── Render ── */
 
   if (src === "loading") return (
     <Shell>
@@ -375,13 +445,18 @@ export default function PerformanceDashboard() {
     </Shell>
   );
 
+  const periodLabel = view === "week"
+    ? `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}`
+    : days[0].toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+
   return (
     <Shell>
-      {/* ── Header ── */}
+      {/* ── Page header ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 26, height: 26, borderRadius: 6, background: "#fef3c7", color: "#d97706", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>⚡</span>
           Performance Dashboard
+          <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{periodLabel}</span>
         </h1>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -395,22 +470,15 @@ export default function PerformanceDashboard() {
             ))}
           </div>
 
-          {/* Navigation */}
           <button onClick={() => setOffset((o) => o - 1)}
-            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>
-            ←
-          </button>
+            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>←</button>
           <button onClick={() => setOffset(0)}
-            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>
-            Hoje
-          </button>
+            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>Hoje</button>
           <button onClick={() => setOffset((o) => o + 1)}
-            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>
-            →
-          </button>
+            style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>→</button>
 
           <a href="/nova-demanda"
-            style={{ background: "#d97706", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
+            style={{ background: "#d97706", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
             + Nova demanda
           </a>
         </div>
@@ -440,39 +508,68 @@ export default function PerformanceDashboard() {
 
       {/* ── Gantt ── */}
       <div style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16 }}>
-        <div style={{ minWidth: LABEL_W + days.length * COL_W }}>
+        <div style={{ width: "100%" }}>
 
-          {/* Day header */}
-          <div style={headerStyle}>
+          {/* Column headers */}
+          <div style={{
+            display: "grid", gridTemplateColumns: GRID_COLS,
+            borderBottom: "1px solid #eef0f3",
+            position: "sticky", top: 0, background: "white", zIndex: 10,
+          }}>
             <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase" }}>
               Task
             </div>
             {days.map((d, i) => {
               const isT = sameDay(d, today);
               return (
-                <div key={i} style={{ padding: "10px 4px", textAlign: "center", borderLeft: "1px solid #f3f4f6", background: isT ? "#f5f3ff" : "transparent" }}>
-                  <div style={{ fontSize: 10, color: isT ? "#7c3aed" : "#9ca3af", fontWeight: isT ? 700 : 500 }}>{dayLabel(d)}</div>
-                  <div style={{ fontSize: 11, color: isT ? "#7c3aed" : "#374151", fontWeight: isT ? 700 : 400 }}>{shortDate(d)}</div>
+                <div key={i} style={{
+                  padding: "8px 4px", textAlign: "center",
+                  borderRight: isT ? "1px solid #c4b5fd" : "1px dashed #d1d5db",
+                  background: isT ? "#f5f3ff" : "transparent",
+                }}>
+                  <div style={{ fontSize: 10, color: isT ? "#7c3aed" : "#9ca3af", fontWeight: isT ? 700 : 500 }}>
+                    {dayLabel(d)}
+                  </div>
+                  <div style={{ fontSize: 11, color: isT ? "#7c3aed" : "#374151", fontWeight: isT ? 700 : 400 }}>
+                    {shortDate(d)}
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Rows */}
+          {/* Task rows */}
           {visible.length === 0 && (
             <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
               Nenhuma task encontrada para o time de Performance.
             </div>
           )}
+
           {visible.map((task) => (
             <div key={task.key}>
               <TaskRow task={task} />
-              {task.subtasks.map((st) => (
+              {!collapsed.has(task.key) && task.subtasks.map((st) => (
                 <TaskRow key={st.key} task={st as unknown as PerfTask} indent />
               ))}
             </div>
           ))}
         </div>
+      </div>
+
+      {/* ── Color legend ── */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        {[
+          { color: "#ef4444", label: "Atrasada ⚠️" },
+          { color: "#fbbf24", label: "Entrega hoje 📅" },
+          { color: "#fca5a5", label: "Aguardando ⏳" },
+          { color: "#9ca3af", label: "Entregue ✅" },
+          { color: "#5b6cff", label: "Em andamento" },
+        ].map(({ color, label }) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 12, height: 12, borderRadius: 3, background: color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: "#6b7280" }}>{label}</span>
+          </div>
+        ))}
       </div>
 
       {/* ── Month summary ── */}
@@ -510,7 +607,7 @@ export default function PerformanceDashboard() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ minHeight: "100vh", background: "#f8f9fb", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' }}>
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
+      <div style={{ maxWidth: 1600, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ marginBottom: 8 }}>
           <a href="/" style={{ fontSize: 11, color: "#9ca3af", textDecoration: "none" }}>← Painel principal</a>
         </div>

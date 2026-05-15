@@ -276,6 +276,7 @@ export default function Dashboard() {
           Creative Command Center
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <a href="/performance" style={{ background: "#0ea5e9", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>📊 Performance</a>
           <a href="/nova-demanda" style={{ background: "#7c3aed", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>+ Nova demanda</a>
           <Btn onClick={() => setPage((p) => p - 1)}>← 2 sem</Btn>
           <Btn onClick={() => setPage((p) => p + 1)}>2 sem →</Btn>
