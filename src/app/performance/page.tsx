@@ -290,6 +290,7 @@ export default function PerformanceDashboard() {
   const [tooltip,           setTooltip]           = useState<TooltipState | null>(null);
   const [doneMonthsCollapsed, setDoneMonthsCollapsed] = useState<Set<string>>(new Set());
   const [deliveredSearch,   setDeliveredSearch]   = useState("");
+  const [debugMeta,         setDebugMeta]         = useState<Record<string, unknown> | null>(null);
   const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load persisted state from localStorage on mount
@@ -306,6 +307,7 @@ export default function PerformanceDashboard() {
       .then((d) => {
         if (!d.tasks) { setSrc("err"); return; }
         setTasks(d.tasks);
+        if (d.meta) setDebugMeta(d.meta);
         setSrc("ok");
 
         // Initialize done-months collapse state on first visit
@@ -709,9 +711,10 @@ export default function PerformanceDashboard() {
           <span style={{ width: 26, height: 26, borderRadius: 6, background: "#fef3c7", color: "#d97706", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>⚡</span>
           Performance Dashboard
           <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{periodLabel}</span>
-          {/* Diagnostic: shows total fetched vs done — remove when confirmed working */}
+          {/* Diagnostic: remove when confirmed working */}
           <span style={{ fontSize: 10, color: "#d1d5db", background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6, padding: "2px 6px" }}>
             {tasks.length} tasks · {tasks.filter(t => t.status === "done").length} fechadas · {doneTasks.length} entregues
+            {debugMeta && ` | Q1:${String(debugMeta.raw1)} Q2:${String(debugMeta.raw2)} new:${String(debugMeta.raw2new)} brasil:${String(debugMeta.brasil)}`}
           </span>
         </h1>
 
@@ -739,6 +742,20 @@ export default function PerformanceDashboard() {
           </a>
         </div>
       </div>
+
+      {/* ── Debug panel — remove when section is confirmed working ── */}
+      {Array.isArray(debugMeta?.sampleStatuses) && (
+        <details style={{ marginBottom: 12, fontSize: 10, color: "#9ca3af", background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "6px 10px" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>🔍 Debug API ({String(debugMeta!.raw1)} Q1 + {String(debugMeta!.raw2)} Q2 = {String(debugMeta!.total)} total, {String(debugMeta!.brasil)} após filtro Brasil)</summary>
+          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+            {(debugMeta!.sampleStatuses as Array<{key:string;status:string;assignee:string;reporter:string;isBrasil:boolean}>).map((s) => (
+              <div key={s.key} style={{ fontFamily: "monospace" }}>
+                {s.key} | status: <b>{s.status}</b> | assignee: {s.assignee||"—"} | reporter: {s.reporter||"—"} | brasil: {s.isBrasil ? "✅" : "❌"}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* ── Add by ticket ── */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
