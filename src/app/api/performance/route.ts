@@ -157,11 +157,12 @@ export async function GET(req: Request) {
     // Query 1: active tasks for the performance team (any status)
     const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
 
-    // Query 2: ALL Done tasks from the current year — broader reporter filter so tasks
-    // created by PMMs / other teams but delivered by performance also appear.
+    // Query 2: Done tasks assigned to anyone on the performance team.
+    // Uses assignee (not reporter) so tasks created by PMMs but done by the team are included.
     // statusCategory = Done is language-independent (catches Concluído, Entregue, etc.)
+    const allTeam = [...PERFORMANCE_REPORTERS, ...PERFORMANCE_ASSIGNEES].join(", ");
     const currentYear = new Date().getFullYear();
-    const jql2 = `project = ${project} AND statusCategory = Done AND updated >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    const jql2 = `project = ${project} AND statusCategory = Done AND assignee in (${allTeam}) AND updated >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     // Run both queries in parallel, then merge (deduplicate by key)
     const [raw1, raw2] = await Promise.all([
