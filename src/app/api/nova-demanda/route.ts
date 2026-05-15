@@ -117,20 +117,21 @@ async function forceSetCountry(base: string, auth: string, issueKey: string): Pr
   };
 
   for (const field of COUNTRY_CANDIDATES) {
+    console.log(`[nova-demanda] forceSetCountry → trying ${field} on ${issueKey}`);
     const res = await fetch(url, {
       method: "PUT",
       headers,
       body: JSON.stringify({ fields: { [field]: { value: "Brasil" } } }),
     });
     if (res.ok) {
-      console.log(`[nova-demanda] Country = Brasil set via ${field} on ${issueKey}`);
+      console.log(`[nova-demanda] forceSetCountry ✅ Country = Brasil set via ${field} on ${issueKey}`);
       return;
     }
     const errText = await res.text();
-    console.warn(`[nova-demanda] ${field} rejected on ${issueKey}:`, errText.slice(0, 120));
+    console.warn(`[nova-demanda] forceSetCountry ❌ ${field} → HTTP ${res.status} on ${issueKey} | body: ${errText.slice(0, 500)}`);
   }
 
-  console.error(`[nova-demanda] ⚠️ All country fields failed for ${issueKey} — issue exists but Country is unset`);
+  console.error(`[nova-demanda] forceSetCountry ⚠️ All 3 fields failed for ${issueKey} — Country is unset`);
 }
 
 async function createJiraIssue(
@@ -293,7 +294,11 @@ export async function POST(req: Request) {
 
     // Force-set Country = Brasil on parent (tries each candidate field until one works)
     if (issueKey) {
-      await forceSetCountry(base, auth, issueKey);
+      try {
+        await forceSetCountry(base, auth, issueKey);
+      } catch (err) {
+        console.error("[nova-demanda] forceSetCountry threw on parent:", err);
+      }
     }
 
     // Derive browse URL from Jira's own "self" field — reliable regardless of env var format
@@ -328,7 +333,11 @@ export async function POST(req: Request) {
 
         // Force-set Country = Brasil on each subtask as well
         if (stKey) {
-          await forceSetCountry(base, auth, stKey);
+          try {
+            await forceSetCountry(base, auth, stKey);
+          } catch (err) {
+            console.error(`[nova-demanda] forceSetCountry threw on subtask ${stKey}:`, err);
+          }
         }
       }
 
