@@ -213,30 +213,6 @@ interface MonthGroup {
   key: string;
   label: string;
   tasks: PerfTask[];
-  totalStatics: number;
-  totalVideos: number;
-}
-
-function countPieces(task: PerfTask): { statics: number; videos: number } {
-  let statics = 0, videos = 0;
-
-  for (const st of task.subtasks) {
-    const t = st.title.toUpperCase();
-    // Videos: motion, vídeo, animação, edição
-    if (/MOTION|V[IÍ]DEO|ANIMAÇ|EDIÇ[AÃ]O/.test(t)) videos++;
-    // Statics: layout, estático, banner, sinalização, desdobramento
-    // NOTE: COPY is text work — not a visual piece, excluded from both counts
-    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR/.test(t)) statics++;
-  }
-
-  // Fallback: if no subtask matched, classify by parent task title
-  if (statics === 0 && videos === 0) {
-    const t = task.title.toUpperCase();
-    if (/MOTION|V[IÍ]DEO|ANIMAÇ|EDIÇ[AÃ]O/.test(t)) videos = 1;
-    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR/.test(t)) statics = 1;
-  }
-
-  return { statics, videos };
 }
 
 function groupByMonth(tasks: PerfTask[]): MonthGroup[] {
@@ -246,12 +222,8 @@ function groupByMonth(tasks: PerfTask[]): MonthGroup[] {
     if (!d) continue;
     const key   = monthKey(d);
     const label = monthLabelOf(d);
-    if (!map.has(key)) map.set(key, { key, label, tasks: [], totalStatics: 0, totalVideos: 0 });
-    const g = map.get(key)!;
-    const { statics, videos } = countPieces(t);
-    g.tasks.push(t);
-    g.totalStatics += statics;
-    g.totalVideos  += videos;
+    if (!map.has(key)) map.set(key, { key, label, tasks: [] });
+    map.get(key)!.tasks.push(t);
   }
   return [...map.entries()]
     .sort(([a], [b]) => b.localeCompare(a)) // newest month first
@@ -437,23 +409,18 @@ export default function PerformanceDashboard() {
   const now = new Date(); now.setHours(0, 0, 0, 0);
 
   const monthStats = useMemo(() => {
-    let statics = 0, videos = 0, delays = 0;
+    let delays = 0;
     const delayed: string[] = [];
     for (const t of visible) {
       const allItems = [t, ...t.subtasks];
       for (const item of allItems) {
-        if (item.status === "done") {
-          const tl = item.title.toLowerCase();
-          if (tl.includes("motion") || tl.includes("video") || tl.includes("vídeo")) videos++;
-          else statics++;
-        }
         if (item.status !== "done" && item.dueDate) {
           const due = parseLocalDate(item.dueDate);
           if (due < now) { delays++; if (!delayed.includes(t.key)) delayed.push(t.key); }
         }
       }
     }
-    return { statics, videos, delays, delayed };
+    return { delays, delayed };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -923,8 +890,6 @@ export default function PerformanceDashboard() {
                   <span style={{ fontSize: 13, fontWeight: 700, color: "#374151" }}>{group.label}</span>
                   <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
                     — {group.tasks.length} {group.tasks.length === 1 ? "task" : "tasks"}
-                    {group.totalStatics > 0 && ` · ${group.totalStatics} estáticos`}
-                    {group.totalVideos  > 0 && ` · ${group.totalVideos} vídeos`}
                   </span>
                 </button>
 
@@ -933,12 +898,6 @@ export default function PerformanceDashboard() {
                   <div>
                     {group.tasks.map((t) => {
                       const delivDate = getDeliveryDate(t);
-                      const { statics, videos } = countPieces(t);
-                      const piecesStr = [
-                        statics > 0 ? `${statics} estático${statics > 1 ? "s" : ""}` : "",
-                        videos  > 0 ? `${videos} vídeo${videos  > 1 ? "s" : ""}` : "",
-                      ].filter(Boolean).join(", ");
-
                       return (
                         <div key={t.key} style={{
                           display: "flex", alignItems: "center", gap: 10,
@@ -956,11 +915,6 @@ export default function PerformanceDashboard() {
                           {delivDate && (
                             <span style={{ fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap" }}>
                               {shortDate(delivDate)}
-                            </span>
-                          )}
-                          {piecesStr && (
-                            <span style={{ fontSize: 10, color: "#6b7280", whiteSpace: "nowrap", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>
-                              {piecesStr}
                             </span>
                           )}
                         </div>
@@ -981,9 +935,7 @@ export default function PerformanceDashboard() {
             Resumo do mês
           </div>
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 12 }}>
-            <Stat label="Estáticos entregues" value={monthStats.statics} color="#7c3aed" />
-            <Stat label="Vídeos entregues"    value={monthStats.videos}  color="#ea580c" />
-            <Stat label="Atrasos"             value={monthStats.delays}  color="#dc2626" />
+            <Stat label="Atrasos" value={monthStats.delays} color="#dc2626" />
           </div>
           {monthStats.delayed.length > 0 && (
             <div>
