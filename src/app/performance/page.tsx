@@ -709,6 +709,10 @@ export default function PerformanceDashboard() {
           <span style={{ width: 26, height: 26, borderRadius: 6, background: "#fef3c7", color: "#d97706", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>⚡</span>
           Performance Dashboard
           <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{periodLabel}</span>
+          {/* Diagnostic: shows total fetched vs done — remove when confirmed working */}
+          <span style={{ fontSize: 10, color: "#d1d5db", background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6, padding: "2px 6px" }}>
+            {tasks.length} tasks · {tasks.filter(t => t.status === "done").length} fechadas · {doneTasks.length} entregues
+          </span>
         </h1>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
