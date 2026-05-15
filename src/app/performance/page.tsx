@@ -219,11 +219,23 @@ interface MonthGroup {
 
 function countPieces(task: PerfTask): { statics: number; videos: number } {
   let statics = 0, videos = 0;
+
   for (const st of task.subtasks) {
     const t = st.title.toUpperCase();
-    if (/MOTION|V[IÍ]DEO/.test(t)) videos++;
-    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR|COPY/.test(t)) statics++;
+    // Videos: motion, vídeo, animação, edição
+    if (/MOTION|V[IÍ]DEO|ANIMAÇ|EDIÇ[AÃ]O/.test(t)) videos++;
+    // Statics: layout, estático, banner, sinalização, desdobramento
+    // NOTE: COPY is text work — not a visual piece, excluded from both counts
+    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR/.test(t)) statics++;
   }
+
+  // Fallback: if no subtask matched, classify by parent task title
+  if (statics === 0 && videos === 0) {
+    const t = task.title.toUpperCase();
+    if (/MOTION|V[IÍ]DEO|ANIMAÇ|EDIÇ[AÃ]O/.test(t)) videos = 1;
+    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR/.test(t)) statics = 1;
+  }
+
   return { statics, videos };
 }
 
