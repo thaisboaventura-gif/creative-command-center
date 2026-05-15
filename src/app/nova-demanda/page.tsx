@@ -258,10 +258,18 @@ export default function NovaDemanda() {
           <div style={card}>
             <div style={{ textAlign: "center", paddingBottom: 16 }}>
               <div style={{ fontSize: 36 }}>✅</div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "8px 0 4px" }}>Demanda criada!</h2>
-              <span style={{ display: "inline-block", background: "#ede9fe", color: "#7c3aed", fontWeight: 700, fontSize: 15, padding: "4px 16px", borderRadius: 6 }}>
-                {doneResult.issueKey}
-              </span>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "8px 0 10px" }}>Demanda criada!</h2>
+              {doneResult.issueKey ? (
+                <a
+                  href={doneResult.jiraLink ?? "#"}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-block", background: "#ede9fe", color: "#7c3aed", fontWeight: 700, fontSize: 15, padding: "6px 18px", borderRadius: 6, textDecoration: "none" }}
+                >
+                  {doneResult.issueKey} ↗
+                </a>
+              ) : (
+                <span style={{ fontSize: 13, color: "#9ca3af" }}>Task criada — número não disponível</span>
+              )}
             </div>
 
             {doneResult.subtasks.length > 0 && (
@@ -282,7 +290,7 @@ export default function NovaDemanda() {
 
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               {doneResult.jiraLink && (
-                <a href={doneResult.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
+                <a href={doneResult.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Abrir no Jira ↗</a>
               )}
               <button onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); setAnexos([]); }} style={btnGhost}>
                 Nova demanda

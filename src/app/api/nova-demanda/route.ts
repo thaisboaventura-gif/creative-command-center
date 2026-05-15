@@ -166,22 +166,29 @@ async function callClaude(system: string, user: string): Promise<string> {
   return data.content?.[0]?.text ?? "";
 }
 
-const VALIDATION_SYSTEM = `Você valida briefings criativos para o time de Brand Creative da Nuvemshop.
+const VALIDATION_SYSTEM = `Você valida briefings criativos. Seja PERMISSIVO — o time resolve detalhes de execução.
 
-REGRAS:
-1. Peças básicas (Banner/Header/WhatsApp image, header de e-mail, in-app, banner web) → NÃO peça dimensões.
-2. Anúncios pagos (Anúncio/Performance) com estáticos > 0 → dimensões obrigatórias.
-3. Motion/Vídeo com vídeos > 0 → dimensões e duração obrigatórias.
-4. Mensagem vaga ou genérica demais (< 8 palavras) → sugira 3 conceitos baseados no contexto.
-5. D2C Summit, D2C, Summit = contexto conhecido → NÃO pedir explicação do evento.
-6. Textos auxiliares Meta/Google/CTAs variados/legendas → NÃO bloquear.
+BLOQUEAR (needs_clarification) APENAS SE:
+1. Tipo de peça indefinido — não dá pra saber se é estático, vídeo ou copy.
+2. Anúncio/Performance com estáticos > 0 E campo de dimensões vazio — specs exatas são obrigatórias para rodar na plataforma.
+3. Motion/Vídeo com vídeos > 0 E dimensões/duração ausentes — necessário para produção.
+4. Todos os 3 campos descritivos (sobre, pedido, mensagem) vazios ou completamente ininteligíveis.
+
+NUNCA BLOQUEAR POR:
+- Público-alvo não detalhado
+- Tom de comunicação não especificado
+- Detalhes de execução (cores, fontes, estilo visual, referências)
+- Número aproximado ou estimado de peças
+- Contextos internos conhecidos: D2C, Summit, SMB, ADS, PMM, Elo7, Nuvemshop, lojistas
+
+SE TIVER DÚVIDA → retorne { "ok": true }
 
 Responda APENAS com JSON:
 { "ok": true }
 ou
-{ "ok": false, "questions": ["pergunta 1", "pergunta 2"] }
+{ "ok": false, "questions": ["pergunta objetiva e direta"] }
 
-Máximo 2 perguntas diretas. Sem introdução, sem texto fora do JSON.`;
+Máximo 1 pergunta. Sem texto fora do JSON.`;
 
 async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; questions?: string[] }> {
   const tipo  = body.tipos.join(", ");
