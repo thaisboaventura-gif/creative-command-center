@@ -87,6 +87,31 @@ function getJiraAuth() {
   return { base, auth };
 }
 
+// Tries each country candidate field until one works.
+// Same approach as nova-demanda route — reliable regardless of env var.
+const COUNTRY_CANDIDATES_AGENT = ["customfield_15854", "customfield_21359", "customfield_10670"];
+
+async function forceSetCountry(base: string, auth: string, issueKey: string): Promise<void> {
+  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
+  const headers = {
+    Authorization: `Basic ${auth}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  for (const field of COUNTRY_CANDIDATES_AGENT) {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ fields: { [field]: [{ value: "Brasil" }] } }),
+    });
+    if (res.ok) {
+      console.log(`[briefing-agent] forceSetCountry ✅ ${field} on ${issueKey}`);
+      return;
+    }
+  }
+  console.warn(`[briefing-agent] forceSetCountry failed for ${issueKey}`);
+}
+
 async function postJiraComment(issueKey: string, text: string): Promise<boolean> {
   const { base, auth } = getJiraAuth();
   if (!base) return false;
@@ -108,12 +133,28 @@ async function postJiraComment(issueKey: string, text: string): Promise<boolean>
   return res.ok;
 }
 
+const RESPONSIBLE_DISPLAY: Record<string, string> = {
+  eduardo: "Eduardo",
+  larissa: "Larissa",
+  joao:    "João",
+  beatriz: "Beatriz",
+};
+
 function buildFriendlyADF(
   accountId: string | null,
   bodyText: string,
-  isCopyRelated: boolean
+  isCopyRelated: boolean,
+  responsible?: string | null
 ): object[] {
   const nodes: object[] = [];
+
+  // First line: responsible team member (when known)
+  if (responsible && RESPONSIBLE_DISPLAY[responsible]) {
+    nodes.push({
+      type: "paragraph",
+      content: [{ type: "text", text: `Responsável: ${RESPONSIBLE_DISPLAY[responsible]} 🎯`, marks: [{ type: "strong" }] }],
+    });
+  }
 
   // Greeting with mention
   nodes.push({
@@ -171,12 +212,13 @@ async function postFriendlyComment(
   issueKey: string,
   accountId: string | null,
   bodyText: string,
-  isCopyRelated = false
+  isCopyRelated = false,
+  responsible?: string | null
 ): Promise<boolean> {
   const { base, auth } = getJiraAuth();
   if (!base) return false;
 
-  const content = buildFriendlyADF(accountId, bodyText, isCopyRelated);
+  const content = buildFriendlyADF(accountId, bodyText, isCopyRelated, responsible);
 
   const res = await fetch(`${base}/rest/api/3/issue/${issueKey}/comment`, {
     method: "POST",
@@ -278,11 +320,6 @@ async function createSubtask(
     parent: { key: parentKey },
   };
 
-  // Set Country = Brasil when field ID is configured
-  if (COUNTRY_FIELD) {
-    fields[COUNTRY_FIELD] = { value: COUNTRY_VALUE };
-  }
-
   const res = await fetch(`${base}/rest/api/3/issue`, {
     method: "POST",
     headers: {
@@ -298,7 +335,12 @@ async function createSubtask(
     return null;
   }
   const data = await res.json();
-  return data.key as string;
+  const key = data.key as string;
+
+  // Always set Country = Brasil on each subtask
+  try { await forceSetCountry(base, auth, key); } catch { /* non-fatal */ }
+
+  return key;
 }
 
 async function getTeamHours(): Promise<Map<string, number>> {
@@ -788,7 +830,7 @@ export async function POST(req: Request) {
     // Step 4a — briefing has issues → post comment, notify Slack and stop
     if (analysis.has_issues && analysis.comment) {
       const copyRelated = analysis.responsible === "beatriz" || analysis.missing_objective || isCopyJob(`${summary} ${description}`);
-      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated);
+      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated, analysis.responsible);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
         `Solicitante: ${solicitante}\n` +
@@ -801,7 +843,7 @@ export async function POST(req: Request) {
     // Step 4b — needs clarification → post question, notify Slack and stop
     if (analysis.needs_clarification && analysis.comment) {
       const copyRelated = analysis.responsible === "beatriz" || analysis.missing_objective || isCopyJob(`${summary} ${description}`);
-      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated);
+      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment, copyRelated, analysis.responsible);
       await sendSlackAlert(
         `🗂️ *Briefing novo:* ${summary}\n` +
         `Solicitante: ${solicitante}\n` +
@@ -826,7 +868,10 @@ export async function POST(req: Request) {
       await postFriendlyComment(issueKey, reporterAccountId, analysis.comment);
     }
 
-    // Step 5 — briefing OK → create subtasks
+    // Step 5 — briefing OK → set Country=Brasil on parent, then create subtasks
+    const { base: jiraBase, auth: jiraAuth } = getJiraAuth();
+    try { await forceSetCountry(jiraBase, jiraAuth, issueKey); } catch { /* non-fatal */ }
+
     const createdSubtasks: Array<{ key: string | null; summary: string }> = [];
     if (analysis.subtasks?.length) {
       for (const st of analysis.subtasks) {
