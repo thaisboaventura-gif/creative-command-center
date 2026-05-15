@@ -40,11 +40,12 @@ function parseLocalDate(s: string): Date {
   return dt;
 }
 
-/** Returns 10 working days (Mon–Fri × 2 weeks) starting from the current Monday + offset. */
+/** Returns 10 working days (Mon–Fri × 2 weeks) starting from the current Monday + offset.
+ *  Each offset unit = 7 calendar days (1 week), so the arrow scrolls by 1 week at a time. */
 function getTwoWeekDays(offsetWeeks: number): Date[] {
   const now = new Date();
   const mon = new Date(now);
-  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offsetWeeks * 14);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offsetWeeks * 7);
   mon.setHours(0, 0, 0, 0);
   return Array.from({ length: 10 }, (_, i) => {
     const d = new Date(mon);
@@ -148,8 +149,8 @@ function calcBar(
   const overdue    = !isDone && due < now;
   const isDueToday = !isDone && due.getTime() === now.getTime();
   const color      = isDone     ? "#9ca3af"
-                   : isWaiting  ? "#fca5a5"
-                   : overdue    ? "#ef4444"
+                   : overdue    ? "#fecaca"   // light red — not alarming, text shows "Em atraso"
+                   : isWaiting  ? "#fbcfe8"   // light pink — distinct from overdue
                    : isDueToday ? "#fbbf24"
                    : projectColor(title);
 
@@ -474,17 +475,18 @@ export default function PerformanceDashboard() {
                 }} />
               )}
 
-              {/* "Deadline: DD/MM" label — only on own due date (no subtask markers) */}
+              {/* Deadline / Em atraso label — only on own due date (no subtask markers) */}
               {isDueCell && !hasSubDeadlines && (
                 <span style={{
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
-                  color: "rgba(255,255,255,0.95)",
-                  textShadow: "0 1px 2px rgba(0,0,0,.35)",
+                  // Overdue bar is light — use dark red text. Others use white.
+                  color: bar!.overdue ? "#b91c1c" : "rgba(255,255,255,0.95)",
+                  textShadow: bar!.overdue ? "none" : "0 1px 2px rgba(0,0,0,.35)",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
                 }}>
-                  Deadline: {bar!.dueLabel}
+                  {bar!.overdue ? `⚠️ Em atraso · ${bar!.dueLabel}` : `Deadline: ${bar!.dueLabel}`}
                 </span>
               )}
 
@@ -709,15 +711,15 @@ export default function PerformanceDashboard() {
       {/* ── Color legend ── */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         {[
-          { color: "#ef4444", label: "Atrasada ⚠️" },
+          { color: "#fecaca", label: "Em atraso ⚠️", textColor: "#b91c1c" },
           { color: "#fbbf24", label: "Entrega hoje 📅" },
-          { color: "#fca5a5", label: "Aguardando ⏳" },
+          { color: "#fbcfe8", label: "Aguardando ⏳" },
           { color: "#9ca3af", label: "Entregue ✅" },
           { color: "#5b6cff", label: "Em andamento" },
-        ].map(({ color, label }) => (
+        ].map(({ color, label, textColor }) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <div style={{ width: 12, height: 12, borderRadius: 3, background: color, flexShrink: 0 }} />
-            <span style={{ fontSize: 11, color: "#6b7280" }}>{label}</span>
+            <span style={{ fontSize: 11, color: textColor ?? "#6b7280" }}>{label}</span>
           </div>
         ))}
       </div>
