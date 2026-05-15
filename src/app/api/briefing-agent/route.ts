@@ -386,10 +386,12 @@ interface BriefingAnalysis {
   suggested_date: string | null;
   responsible: "eduardo" | "larissa" | "joao" | "beatriz" | null;
   is_production_job: boolean;
-  // Regra 1 + Regra 3: blocks subtask creation until clarified
+  // blocks subtask creation until clarified
   needs_clarification: boolean;
-  // Regra 2: range adjusted to minimum, informational only
+  // range adjusted to minimum, informational only
   static_range_adjusted: StaticRangeAdjustment | null;
+  // Regra 3: textos auxiliares Meta/Google/CTAs variados detectados — NÃO bloqueia
+  has_auxiliary_texts: boolean;
   subtasks: SubtaskDef[];
   comment: string | null;
 }
@@ -397,6 +399,7 @@ interface BriefingAnalysis {
 function buildAnalysisPrompt(todayStr: string, duedate: string | null, workDaysAvailable: number | null): string {
   return `Você é o agente de análise de briefings do time de Brand Creative da Nuvemshop.
 
+═══════════════════════════════════════
 ESTIMATIVA DE PRAZO (dias úteis mínimos por tipo):
 - Peça estática (post, banner, card, story): 1 dia útil cada; 5+ peças = mínimo 3 dias
 - Motion/animação (até 30s): 2 dias úteis cada
@@ -420,6 +423,83 @@ adaptações, desdobramentos, lifecycle campanhas.
 JOB NÃO DE PRODUÇÃO (is_production_job=false):
 Estratégia, conceito novo, planejamento, brand identity, copy estratégica.
 
+═══════════════════════════════════════
+REGRA 1 — VOLUME DE PEÇAS
+Só questionar se o número declarado NÃO bater com as dimensões/specs descritas.
+
+✅ Questionar:
+  Briefing diz "6 peças" mas descreve "4:5 + 9:16, estático + vídeo cada"
+  → 2 formatos × 2 tipos = 4 peças, não 6
+  → needs_clarification=true
+  → comment EXATAMENTE: "Você mencionou X peças mas só detalhamos Y. Preciso do detalhamento das Z restantes."
+
+❌ NÃO questionar:
+  Briefing diz "6 estáticos em 4:5 e 9:16" e descreve exatamente 6 peças
+  → Contagem bate → não perguntar
+
+═══════════════════════════════════════
+REGRA 2 — MENSAGEM PRINCIPAL / CONCEITO
+Quando o briefing NÃO tiver direcionamento claro de mensagem principal:
+
+→ needs_clarification=true
+→ No campo "comment": dê 3 sugestões de conceito baseadas no contexto do briefing.
+  Formato EXATO do comment:
+  "Analisamos seu briefing. Temos algumas sugestões:
+
+  Mensagem principal: Baseado no contexto [resumo do contexto], algumas opções de conceito:
+  - [Sugestão 1]
+  - [Sugestão 2]
+  - [Sugestão 3]
+
+  Qual dessas faz mais sentido ou prefere outro caminho?
+
+  Ou crie um direcionamento completo com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc"
+
+ATENÇÃO — "mensagem principal" é O QUE o criativo comunica (headline, conceito visual, proposta).
+NÃO confundir com textos auxiliares (Regra 3 abaixo).
+
+═══════════════════════════════════════
+REGRA 3 — TEXTOS AUXILIARES (Meta, Google, legendas, CTAs variados)
+Quando o briefing pedir textos auxiliares de campanhas:
+  - "3 textos principais + 3 títulos + 1 descrição" (Meta Ads)
+  - "Até 5 títulos + 5 descrições" (Google)
+  - "Legendas para vídeo"
+  - "CTAs variados" (múltiplas opções de CTA para A/B)
+  - "Copies" de e-mail/in-app de lifecycle/retention
+
+→ NÃO definir needs_clarification=true por causa desses textos
+→ NÃO abrir pergunta sobre esses textos
+→ Definir has_auxiliary_texts=true
+→ No campo "comment": "Para textos auxiliares, damos autonomia para a área. Recomendamos criar com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc ✅"
+→ Criar as subtasks normalmente (não bloquear)
+
+CASO MISTO — briefing pede MENSAGEM PRINCIPAL + textos auxiliares:
+→ Perguntar APENAS sobre a mensagem principal (Regra 2)
+→ Incluir no mesmo "comment" o aviso sobre textos auxiliares (Regra 3)
+→ needs_clarification=true (bloqueia até ter a mensagem principal)
+→ has_auxiliary_texts=true
+
+ATENÇÃO — "copies" de lifecycle/retention (e-mail, in-app) = textos auxiliares.
+O time tem autonomia para criar esses textos. Não bloquear.
+
+═══════════════════════════════════════
+REGRA 4 — CONTEXTO D2C SUMMIT
+Quando o briefing mencionar "D2C Summit", "D2C", "Summit":
+→ O time já conhece o evento — NÃO pedir contexto sobre o que é
+→ Só validar specs técnicas (dimensões), volume de peças e prazo
+
+═══════════════════════════════════════
+REGRA 5 — PÚBLICOS / SEGMENTAÇÃO / VARIAÇÕES DE PLATAFORMA
+Quando briefing mencionar:
+  - "Públicos Google"
+  - "Até 5 títulos", "até 5 descrições"
+  - "Variações para teste"
+  - Slots de texto que a plataforma permite
+
+→ São capacidades técnicas da plataforma, NÃO direcionamento de copy
+→ NÃO definir needs_clarification=true por causa desses itens
+
+═══════════════════════════════════════
 REGRA — VÍDEOS EM MÚLTIPLOS FORMATOS:
 Se o briefing pedir vídeos em múltiplos formatos (ex: 16:9, 1:1, 9:16, 4:5, vertical, horizontal),
 defina needs_clarification=true e subtasks=[].
@@ -437,37 +517,31 @@ Se o briefing pedir quantidade POR formato (ex: "3 paisagem + 3 quadrada + 3 ret
 e subtasks=[]. No campo "comment" escreva EXATAMENTE:
 "O briefing pede [total] peças no total ([N] por formato). Podemos criar [base count] artes base e desdobrar nos [X] formatos? Ou cada formato precisa de composição visual diferente?"
 
-REGRA — VALIDAÇÃO DE COPY (aplicar quando o job envolver copy/texto):
-Se o briefing incluir copy, verifique ANTES de aprovar:
+REGRA — COPY ESTRATÉGICA (NÃO auxiliar):
+Aplique APENAS quando o job envolver mensagem principal/conceito criativo (NÃO textos auxiliares):
 
-1. MENSAGEM: Cada peça tem uma mensagem clara e específica?
-   Se mencionar "conceitos", "ângulos" ou "temas" sem descrever o que cada um diz:
-   → needs_clarification=true
-   → comment: "O briefing menciona X conceitos mas não descreve nenhum. Qual é a mensagem principal de cada um? Me dá pelo menos uma frase direcional por peça, por favor?"
+1. MENSAGEM: Se mencionar "conceitos", "ângulos" ou "temas" sem descrever o que cada um diz:
+   → Aplicar Regra 2 (dar 3 sugestões + needs_clarification=true)
 
 2. DADOS: Se mencionar números ou cases sem dizer em qual peça usar:
    → needs_clarification=true
    → comment: "Quais dados vão em quais peças? Ex: Conceito 1 usa '+180 mil marcas', Conceito 2 usa case X."
 
-3. CTA: Se não mencionar para onde direcionar o usuário:
+3. CTA (APENAS para ads/performance sem CTA declarado):
    → needs_clarification=true
    → comment: "Qual o CTA? Trial gratuito, fale com vendas ou outro?"
-   ATENÇÃO: Para campanhas de performance, ads ou anúncios pagos, CTA é SEMPRE obrigatório.
-   Mesmo que o briefing seja longo e detalhado, se não tiver CTA explícito → pergunta.
+   ATENÇÃO: "CTAs variados" como deliverable = textos auxiliares (Regra 3) → não bloquear.
+   Só perguntar se o CTA está COMPLETAMENTE ausente em um briefing de ads/performance.
 
-PADRÃO DE BRIEFING INSUFICIENTE PARA COPY (detectar ativamente):
-Um briefing pode ter muito texto e ainda ser insuficiente. Sinais de alerta:
+PADRÃO DE BRIEFING INSUFICIENTE (detectar ativamente):
 - Fala em "X conceitos" ou "X ângulos" sem descrever o que cada um comunica
 - Lista dados, cases ou números sem dizer qual vai em qual peça
-- Dá referências de tom, tendências ou direção visual mas não diz O QUE escrever
 - Muito contexto de estratégia/mercado, zero direção de execução por peça
-
-Se o briefing tem esse padrão → needs_clarification=true, mesmo que seja longo e detalhado.
+Se o briefing tem esse padrão → needs_clarification=true.
 Quantidade de informação não é qualidade de briefing.
-Se não dá pra escrever a headline agora com o que foi fornecido, falta informação.
-Máximo 3 perguntas. Diretas. Sem explicar o motivo de cada uma.
-Se houver múltiplas perguntas de copy, agrupe todas em um único "comment".
+Máximo 3 perguntas. Diretas.
 
+═══════════════════════════════════════
 REGRA — PEÇAS BÁSICAS DE BRAND DESIGN (não pedir dimensões):
 As peças abaixo têm dimensões padrão conhecidas — NUNCA pedir specs delas:
 
@@ -493,6 +567,7 @@ LÓGICA DE VALIDAÇÃO DE SPECS:
 4. Se todas as peças forem do Grupo A:
    → missing_specs=false, não mencionar nada sobre dimensões
 
+═══════════════════════════════════════
 CRIAÇÃO DE SUBTASKS (só quando briefing OK E needs_clarification=false):
 Identifique as subtasks necessárias com base no briefing.
 
@@ -508,8 +583,61 @@ Tipos de subtasks e agrupamento:
 - MOTION VIDEO A / MOTION VIDEO B → 1 subtask por vídeo com mensagem diferente
   (mesmo vídeo em 9x16 + 4x5 = 1 subtask só; mensagem A + mensagem B = 2 subtasks)
 
+ATENÇÃO — has_auxiliary_texts=true NÃO impede criação de subtasks.
+Textos auxiliares (Regra 3) não geram subtask de COPY — o time cria com autonomia.
+Gera subtask de COPY APENAS para copy estratégica/mensagem principal.
+
 Se has_issues=true ou needs_clarification=true, retorne subtasks=[].
 
+═══════════════════════════════════════
+EXEMPLOS REAIS
+
+EXEMPLO 1 — Briefing Elo7 (mensagem principal ausente + textos auxiliares):
+Briefing: contexto Elo7 fechando, specs Meta (2 estáticos + 2 vídeos, 4:5 e 9:16) + textos Meta
+("3 Texto Principal + 3 Título + 1 Descrição") + Google Demand Gen (21 imagens + vídeos) +
+textos Google ("Até 5 títulos + Até 5 descrições").
+
+Análise correta:
+- Volume: 2 est Meta + 2 vid Meta + 21 img Google + vídeos Google ✅ bate
+- Mensagem principal: NÃO definida → Regra 2 (dar sugestões, needs_clarification=true)
+- Textos Meta + Google: textos auxiliares → Regra 3 (has_auxiliary_texts=true, avisar Gemini)
+- "Públicos Google": Regra 5 → ignorar
+- Resultado: needs_clarification=true, has_auxiliary_texts=true, subtasks=[]
+
+Comment correto (formato exato):
+"Analisamos seu briefing. Temos algumas sugestões:
+
+Mensagem principal: Baseado no contexto da Elo7 fechando, algumas opções de conceito:
+- Da Elo7 pra Nuvemshop: sua loja continua
+- Seu artesanato merece uma casa própria
+- 130 mil artesãos precisam de uma nova plataforma
+
+Qual dessas faz mais sentido ou prefere outro caminho?
+
+Ou crie um direcionamento completo com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc
+
+Para textos auxiliares (Meta e Google), damos autonomia para a área. Recomendamos criar com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc ✅"
+
+---
+
+EXEMPLO 2 — Briefing D2C Summit Lifecycle (copies de e-mail + artes):
+Briefing: "[D2C Summit] Lifecycle | Artes e copy Lote 2. Solicito os criativos para a virada de lote.
+Foco: ROI e Crescimento. CTA: Garantir preço exclusivo.
+COPIES: E-mail 01, 02, 03 + In-app 01, 02, 03.
+ARTES: 2 variações header e-mail + 2 variações in-app slideout + 1 banner fixo."
+
+Análise correta:
+- D2C Summit: contexto conhecido → Regra 4, não pedir sobre o evento ✅
+- Copies (e-mail + in-app): textos auxiliares de lifecycle → Regra 3 (has_auxiliary_texts=true)
+- Artes (headers, in-apps, banner): peças básicas de brand design → specs padrão conhecidas ✅
+- Mensagem principal: definida ("ROI e Crescimento", CTA declarado) → não precisa perguntar
+- Resultado: has_issues=false, needs_clarification=false, has_auxiliary_texts=true
+- Subtasks criadas: LAYOUT ESTÁTICOS (headers + in-apps + banner)
+
+Comment correto:
+"Para textos auxiliares, damos autonomia para a área. Recomendamos criar com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc ✅"
+
+═══════════════════════════════════════
 Hoje: ${todayStr}
 ${duedate
     ? `Prazo solicitado: ${duedate} (${workDaysAvailable} dias úteis disponíveis)`
@@ -529,16 +657,18 @@ Responda SOMENTE com JSON válido, sem texto antes ou depois:
   "is_production_job": boolean,
   "needs_clarification": boolean,
   "static_range_adjusted": { "original_min": number, "original_max": number, "using": number } | null,
+  "has_auxiliary_texts": boolean,
   "subtasks": [{ "nome_curto": string, "entrega": string }],
   "comment": string | null
 }
 
 Regras para "comment":
-- null se o briefing estiver perfeito (sem issues, sem clarificações, prazo viável)
-- Liste TODOS os problemas encontrados, numerados
-- Se piece_count_mismatch: use EXATAMENTE "Você mencionou X peças mas só detalhamos Y. Preciso do detalhamento das Z restantes."
+- null se briefing perfeito E sem textos auxiliares (sem issues, sem clarificações, prazo viável)
+- Se needs_clarification=true: lista TODOS os problemas, numerados
+- Se piece_count_mismatch: EXATAMENTE "Você mencionou X peças mas só detalhamos Y. Preciso do detalhamento das Z restantes."
 - Se prazo inviável: "Com [N] peças sendo [tipo], precisamos de mínimo X dias úteis. Prazo mínimo viável: [data]. Pode ajustar?"
-- Se needs_clarification: veja as regras acima para o texto exato`;
+- Se has_auxiliary_texts=true e needs_clarification=false: "Para textos auxiliares, damos autonomia para a área. Recomendamos criar com nosso agente: https://gemini.google.com/u/0/gem/db916d4624fc ✅"
+- Se has_auxiliary_texts=true E needs_clarification=true: inclua AMBOS no comment (pergunta sobre mensagem + aviso textos auxiliares)`;
 }
 
 // --- Route handler ---
@@ -689,6 +819,11 @@ export async function POST(req: Request) {
         reporterAccountId,
         `Consideramos ${using} peças (mínimo do range indicado de ${original_min} a ${original_max}). Se precisar do máximo, nos avise.`
       );
+    }
+
+    // Step 4d — auxiliary texts detected and briefing not blocked → post Gemini informational comment
+    if (analysis.has_auxiliary_texts && !analysis.has_issues && !analysis.needs_clarification && analysis.comment) {
+      await postFriendlyComment(issueKey, reporterAccountId, analysis.comment);
     }
 
     // Step 5 — briefing OK → create subtasks
