@@ -128,22 +128,39 @@ async function createJiraIssue(
     project:     { key: project },
     summary,
     description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: descText }] }] },
-    issuetype:   parentKey ? { id: "10005" } : { id: "10004" },
-    ...(duedate     ? { duedate }                          : {}),
+    issuetype:   parentKey ? { name: "Subtask" } : { name: "Task" },
+    ...(duedate     ? { duedate }                             : {}),
     ...(assigneeId  ? { assignee: { accountId: assigneeId } } : {}),
     ...(reporterId && !parentKey ? { reporter: { accountId: reporterId } } : {}),
-    ...(parentKey   ? { parent: { key: parentKey } }       : {}),
+    ...(parentKey   ? { parent: { key: parentKey } }          : {}),
   };
 
-  // Try to set OWNER field (area) if env var is set
-  const ownerField = process.env.JIRA_OWNER_FIELD?.trim();
-  if (ownerField && !parentKey && fields.description) {
-    // owner is stored in descText header — Jira text field
-    // Note: set via PUT after creation since field type may vary
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields }) });
+
+  if (!res.ok) {
+    console.error("[createJiraIssue] FAILED", res.status);
+    console.error("[createJiraIssue] Fields sent:", JSON.stringify(fields, null, 2));
+    const errorBody = await res.text();
+    console.error("[createJiraIssue] Jira error response:", errorBody);
+
+    // 400 with reporter → field is frequently rejected when "Modify Reporter"
+    // permission is disabled; retry without it so the task still gets created
+    if (res.status === 400 && fields.reporter) {
+      console.warn("[createJiraIssue] Retrying WITHOUT reporter field...");
+      const { reporter: _r, ...fieldsNoReporter } = fields;
+      const retry = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields: fieldsNoReporter }) });
+      if (!retry.ok) {
+        console.error("[createJiraIssue] Retry also failed", retry.status);
+        console.error("[createJiraIssue] Retry error:", await retry.text());
+        return null;
+      }
+      console.log("[createJiraIssue] Retry SUCCESS (without reporter)");
+      return retry.json();
+    }
+
+    return null;
   }
 
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields }) });
-  if (!res.ok) { console.error("[nova-demanda] create failed", res.status, await res.text()); return null; }
   return res.json();
 }
 
