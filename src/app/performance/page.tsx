@@ -203,6 +203,7 @@ interface TooltipState {
   link: string;
   x: number;
   y: number;
+  isDone: boolean;
 }
 
 /* ─── Main component ─── */
@@ -435,10 +436,13 @@ export default function PerformanceDashboard() {
             ? subWithDue.filter((st) => sameDay(parseLocalDate(st.dueDate!), d))
             : [];
 
+          const isWeekEnd   = i < days.length - 1 && days[i + 1].getDay() === 1;
           const borderRight = isToday
             ? "1px solid #c4b5fd"
             : isDueCell
             ? `1px solid ${barColor}`
+            : isWeekEnd
+            ? "2px solid #9ca3af"
             : "1px dashed #d1d5db";
 
           const barRadius = !bar ? "0"
@@ -484,12 +488,13 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* 📦 subtask deadline markers */}
+              {/* 📦 / ✅📦 subtask deadline markers */}
               {dayMarkers.map((st) => {
                 const stDateLabel = (() => {
                   const dt = parseLocalDate(st.dueDate!);
                   return `${dt.getDate()}/${dt.getMonth() + 1}`;
                 })();
+                const stDone = st.status === "done";
                 return (
                   <span
                     key={st.key}
@@ -501,6 +506,7 @@ export default function PerformanceDashboard() {
                         link: `${JIRA_BASE}/${st.key}`,
                         x: rect.left + rect.width / 2,
                         y: rect.bottom + 6,
+                        isDone: stDone,
                       });
                     }}
                     onMouseLeave={hideTooltip}
@@ -508,13 +514,15 @@ export default function PerformanceDashboard() {
                       position: "absolute",
                       top: "50%", left: "50%",
                       transform: "translate(-50%, -50%)",
-                      fontSize: 13, lineHeight: 1,
+                      fontSize: 12, lineHeight: 1,
                       cursor: "pointer", zIndex: 3,
                       userSelect: "none",
                       filter: "drop-shadow(0 1px 1px rgba(0,0,0,.3))",
+                      display: "flex", alignItems: "center", gap: 1,
                     }}
                   >
-                    📦
+                    {stDone && <span style={{ fontSize: 10 }}>✅</span>}
+                    <span>📦</span>
                   </span>
                 );
               })}
@@ -580,6 +588,11 @@ export default function PerformanceDashboard() {
         <span style={{ color: "#9ca3af", fontSize: 10 }}>
           Entrega: {tooltip.dateLabel} &nbsp;↗
         </span>
+        {tooltip.isDone && (
+          <span style={{ color: "#6ee7b7", fontSize: 10, fontWeight: 600 }}>
+            ✅ Concluída
+          </span>
+        )}
       </a>
     )}
     <Shell>
@@ -653,10 +666,15 @@ export default function PerformanceDashboard() {
             </div>
             {days.map((d, i) => {
               const isT = sameDay(d, today);
+              // Thicker solid separator between weeks (last day before a Monday)
+              const isWeekEnd = i < days.length - 1 && days[i + 1].getDay() === 1;
+              const headerBorder = isT ? "1px solid #c4b5fd"
+                : isWeekEnd ? "2px solid #9ca3af"
+                : "1px dashed #d1d5db";
               return (
                 <div key={i} style={{
                   padding: "8px 4px", textAlign: "center",
-                  borderRight: isT ? "1px solid #c4b5fd" : "1px dashed #d1d5db",
+                  borderRight: headerBorder,
                   background: isT ? "#f5f3ff" : "transparent",
                 }}>
                   <div style={{ fontSize: 10, color: isT ? "#7c3aed" : "#9ca3af", fontWeight: isT ? 700 : 500 }}>
