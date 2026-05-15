@@ -164,8 +164,12 @@ function calcBar(
 
 /* ─── Storage helpers ─── */
 
-const HIDDEN_KEY    = "perf_hidden_v1";
-const COLLAPSED_KEY = "perf_collapsed_v1";
+const HIDDEN_KEY       = "perf_hidden_v1";
+const COLLAPSED_KEY    = "perf_collapsed_v1";
+const DONE_MONTHS_KEY  = "perf_done_months_v1";
+
+const PT_MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+                   "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 function loadSet(key: string): Set<string> {
   try {
@@ -176,6 +180,67 @@ function loadSet(key: string): Set<string> {
 
 function saveSet(key: string, s: Set<string>) {
   try { localStorage.setItem(key, JSON.stringify([...s])); } catch { /* noop */ }
+}
+
+/* ─── Delivery helpers ─── */
+
+function isFullyDone(task: PerfTask): boolean {
+  if (task.subtasks.length === 0) return task.status === "done";
+  return task.subtasks.every((st) => st.status === "done");
+}
+
+/** Returns the latest subtask dueDate, falling back to the parent's dueDate. */
+function getDeliveryDate(task: PerfTask): Date | null {
+  const dates = task.subtasks
+    .filter((st) => st.dueDate)
+    .map((st) => parseLocalDate(st.dueDate!));
+  if (dates.length === 0) return task.dueDate ? parseLocalDate(task.dueDate) : null;
+  return dates.reduce((a, b) => (b > a ? b : a));
+}
+
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabelOf(d: Date): string {
+  return `${PT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+interface MonthGroup {
+  key: string;
+  label: string;
+  tasks: PerfTask[];
+  totalStatics: number;
+  totalVideos: number;
+}
+
+function countPieces(task: PerfTask): { statics: number; videos: number } {
+  let statics = 0, videos = 0;
+  for (const st of task.subtasks) {
+    const t = st.title.toUpperCase();
+    if (/MOTION|V[IÍ]DEO/.test(t)) videos++;
+    else if (/LAYOUT|EST[AÁ]T|BANNER|SINALI|DESDOBR|COPY/.test(t)) statics++;
+  }
+  return { statics, videos };
+}
+
+function groupByMonth(tasks: PerfTask[]): MonthGroup[] {
+  const map = new Map<string, MonthGroup>();
+  for (const t of tasks) {
+    const d = getDeliveryDate(t);
+    if (!d) continue;
+    const key   = monthKey(d);
+    const label = monthLabelOf(d);
+    if (!map.has(key)) map.set(key, { key, label, tasks: [], totalStatics: 0, totalVideos: 0 });
+    const g = map.get(key)!;
+    const { statics, videos } = countPieces(t);
+    g.tasks.push(t);
+    g.totalStatics += statics;
+    g.totalVideos  += videos;
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => b.localeCompare(a)) // newest month first
+    .map(([, v]) => v);
 }
 
 /* ─── Sub-components ─── */
@@ -219,8 +284,10 @@ export default function PerformanceDashboard() {
   const [addInput,   setAddInput]   = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState("");
-  const [tooltip,    setTooltip]    = useState<TooltipState | null>(null);
-  const tooltipTimer                = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tooltip,           setTooltip]           = useState<TooltipState | null>(null);
+  const [doneMonthsCollapsed, setDoneMonthsCollapsed] = useState<Set<string>>(new Set());
+  const [deliveredSearch,   setDeliveredSearch]   = useState("");
+  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load persisted state from localStorage on mount
   useEffect(() => {
@@ -234,8 +301,27 @@ export default function PerformanceDashboard() {
     fetch("/api/performance")
       .then((r) => r.json())
       .then((d) => {
-        if (d.tasks) { setTasks(d.tasks); setSrc("ok"); }
-        else setSrc("err");
+        if (!d.tasks) { setSrc("err"); return; }
+        setTasks(d.tasks);
+        setSrc("ok");
+
+        // Initialize done-months collapse state on first visit
+        const stored = localStorage.getItem(DONE_MONTHS_KEY);
+        if (stored) {
+          setDoneMonthsCollapsed(new Set(JSON.parse(stored)));
+        } else {
+          const curKey = monthKey(new Date());
+          const toCollapse = new Set<string>(
+            (d.tasks as PerfTask[])
+              .filter(isFullyDone)
+              .map(getDeliveryDate)
+              .filter(Boolean)
+              .map((dt) => monthKey(dt as Date))
+              .filter((k) => k !== curKey)
+          );
+          setDoneMonthsCollapsed(toCollapse);
+          saveSet(DONE_MONTHS_KEY, toCollapse);
+        }
       })
       .catch(() => setSrc("err"));
   }, []);
@@ -249,7 +335,16 @@ export default function PerformanceDashboard() {
   // CSS grid: task label column + N day columns, each filling available space (min 50px)
   const GRID_COLS = `${LABEL_W}px repeat(${days.length}, minmax(50px, 1fr))`;
 
-  const visible = tasks.filter((t) => !hidden.has(t.key));
+  const visible       = tasks.filter((t) => !hidden.has(t.key));
+  const visibleActive = visible.filter((t) => !isFullyDone(t));
+  const doneTasks     = visible.filter((t) => isFullyDone(t));
+
+  const monthGroups = useMemo(() => {
+    const q = deliveredSearch.toLowerCase();
+    const filtered = q ? doneTasks.filter((t) => t.title.toLowerCase().includes(q)) : doneTasks;
+    return groupByMonth(filtered);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneTasks, deliveredSearch]);
 
   /* ── Actions ── */
 
@@ -272,6 +367,13 @@ export default function PerformanceDashboard() {
     else next.add(key);
     setCollapsed(next);
     saveSet(COLLAPSED_KEY, next);
+  }
+
+  function toggleDoneMonth(key: string) {
+    const next = new Set(doneMonthsCollapsed);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setDoneMonthsCollapsed(next);
+    saveSet(DONE_MONTHS_KEY, next);
   }
 
   /* ── Tooltip helpers ── */
@@ -691,13 +793,13 @@ export default function PerformanceDashboard() {
           </div>
 
           {/* Task rows */}
-          {visible.length === 0 && (
+          {visibleActive.length === 0 && (
             <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-              Nenhuma task encontrada para o time de Performance.
+              Nenhuma task ativa encontrada para o time de Performance.
             </div>
           )}
 
-          {visible.map((task) => (
+          {visibleActive.map((task) => (
             <div key={task.key}>
               <TaskRow task={task} />
               {!collapsed.has(task.key) && task.subtasks.map((st) => (
@@ -723,6 +825,104 @@ export default function PerformanceDashboard() {
           </div>
         ))}
       </div>
+
+      {/* ── Entregas concluídas ── */}
+      {(doneTasks.length > 0 || deliveredSearch) && (
+        <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16, overflow: "hidden" }}>
+
+          {/* Section header + search */}
+          <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#374151" }}>📦 Entregas concluídas</span>
+            <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>
+              {doneTasks.length} {doneTasks.length === 1 ? "task" : "tasks"}
+            </span>
+            <input
+              value={deliveredSearch}
+              onChange={(e) => setDeliveredSearch(e.target.value)}
+              placeholder="Buscar tarefas entregues..."
+              style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12, color: "#111", outline: "none", background: "#fafafa", width: 220 }}
+            />
+          </div>
+
+          {monthGroups.length === 0 && (
+            <div style={{ padding: "24px 16px", textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
+              {deliveredSearch ? "Nenhum resultado para essa busca." : "Nenhuma task concluída ainda."}
+            </div>
+          )}
+
+          {monthGroups.map((group) => {
+            // When searching: always expand. Otherwise: use saved collapse state.
+            const expanded = deliveredSearch ? true : !doneMonthsCollapsed.has(group.key);
+
+            return (
+              <div key={group.key} style={{ borderBottom: "1px solid #f3f4f6" }}>
+
+                {/* Month row */}
+                <button
+                  onClick={() => { if (!deliveredSearch) toggleDoneMonth(group.key); }}
+                  style={{
+                    width: "100%", padding: "10px 16px",
+                    display: "flex", alignItems: "center", gap: 8,
+                    background: expanded ? "#fafafa" : "white",
+                    border: "none", cursor: deliveredSearch ? "default" : "pointer", textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontSize: 9, color: "#9ca3af", minWidth: 10, userSelect: "none" }}>
+                    {expanded ? "▼" : "▶"}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#374151" }}>{group.label}</span>
+                  <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
+                    — {group.tasks.length} {group.tasks.length === 1 ? "task" : "tasks"}
+                    {group.totalStatics > 0 && ` · ${group.totalStatics} estáticos`}
+                    {group.totalVideos  > 0 && ` · ${group.totalVideos} vídeos`}
+                  </span>
+                </button>
+
+                {/* Task list */}
+                {expanded && (
+                  <div>
+                    {group.tasks.map((t) => {
+                      const delivDate = getDeliveryDate(t);
+                      const { statics, videos } = countPieces(t);
+                      const piecesStr = [
+                        statics > 0 ? `${statics} estático${statics > 1 ? "s" : ""}` : "",
+                        videos  > 0 ? `${videos} vídeo${videos  > 1 ? "s" : ""}` : "",
+                      ].filter(Boolean).join(", ");
+
+                      return (
+                        <div key={t.key} style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "7px 16px 7px 34px",
+                          borderTop: "1px solid #f9fafb",
+                        }}>
+                          <a
+                            href={`${JIRA_BASE}/${t.key}`}
+                            target="_blank" rel="noopener noreferrer"
+                            title={t.title}
+                            style={{ flex: 1, fontSize: 12, color: "#374151", fontWeight: 500, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          >
+                            {t.title}
+                          </a>
+                          {delivDate && (
+                            <span style={{ fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                              {shortDate(delivDate)}
+                            </span>
+                          )}
+                          {piecesStr && (
+                            <span style={{ fontSize: 10, color: "#6b7280", whiteSpace: "nowrap", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>
+                              {piecesStr}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Month summary ── */}
       {view === "month" && (
