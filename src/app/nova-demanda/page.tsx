@@ -125,6 +125,9 @@ export default function NovaDemanda() {
   const [doneResult, setDoneResult] = useState<DoneResult | null>(null);
   const [doneUnassignedKey, setDoneUnassignedKey] = useState<{ key: string; link: string | null } | null>(null);
 
+  // Attachments
+  const [anexos, setAnexos] = useState<File[]>([]);
+
   const busy = pageState === "validating" || pageState === "creating";
 
   function set<K extends keyof FormData>(k: K, v: FormData[K]) {
@@ -167,8 +170,13 @@ export default function NovaDemanda() {
   async function doCreate(extraNote?: string): Promise<void> {
     setPageState("creating");
     try {
-      const body = buildPayload("create", extraNote);
-      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const payload = buildPayload("create", extraNote);
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(payload)) {
+        fd.append(k, Array.isArray(v) ? JSON.stringify(v) : String(v ?? ""));
+      }
+      anexos.forEach(f => fd.append("files", f));
+      const res = await fetch("/api/nova-demanda", { method: "POST", body: fd });
       const data = await res.json();
       if (data.status === "created") {
         setDoneResult({ issueKey: data.issueKey, jiraLink: data.jiraLink, subtasks: data.subtasks ?? [] });
@@ -183,8 +191,13 @@ export default function NovaDemanda() {
   async function doCreateUnassigned(): Promise<void> {
     setPageState("creating");
     try {
-      const body = buildPayload("force_create");
-      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const payload = buildPayload("force_create");
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(payload)) {
+        fd.append(k, Array.isArray(v) ? JSON.stringify(v) : String(v ?? ""));
+      }
+      anexos.forEach(f => fd.append("files", f));
+      const res = await fetch("/api/nova-demanda", { method: "POST", body: fd });
       const data = await res.json();
       setDoneUnassignedKey({ key: data.issueKey, link: data.jiraLink });
       setPageState("done_unassigned");
@@ -271,7 +284,7 @@ export default function NovaDemanda() {
               {doneResult.jiraLink && (
                 <a href={doneResult.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
               )}
-              <button onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); }} style={btnGhost}>
+              <button onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); setAnexos([]); }} style={btnGhost}>
                 Nova demanda
               </button>
             </div>
@@ -423,7 +436,64 @@ export default function NovaDemanda() {
               placeholder="Ex: Migre da Elo7 para a Nuvemshop antes do encerramento" />
           </div>
 
-          {/* 7 — Prazo */}
+          {/* 7 — Anexos */}
+          <div>
+            <label style={lbl}>
+              Anexos <span style={{ fontWeight: 400, color: "#9ca3af" }}>(opcional)</span>
+            </label>
+            <p style={{ fontSize: 11, color: "#9ca3af", margin: "0 0 8px" }}>
+              Referências, mockups, briefing detalhado, etc.
+            </p>
+            <label style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "7px 14px", border: "1px dashed #d1d5db", borderRadius: 8,
+              background: busy ? "#f9fafb" : "#fafafa", cursor: busy ? "default" : "pointer",
+              fontSize: 12, color: "#6b7280", userSelect: "none",
+            }}>
+              <span>📎</span>
+              <span>Selecionar arquivos</span>
+              <input
+                type="file" multiple
+                accept="image/*,.pdf,.doc,.docx,.ppt,.pptx"
+                disabled={busy}
+                style={{ display: "none" }}
+                onChange={e => {
+                  const files = Array.from(e.target.files ?? []);
+                  setAnexos(prev => [...prev, ...files]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {anexos.length > 0 && (
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                {anexos.map((f, i) => (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "5px 10px", background: "#f3f4f6", borderRadius: 6,
+                  }}>
+                    <span style={{ fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#374151" }}>
+                      {f.name}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                      {f.size < 1024 * 1024
+                        ? `${(f.size / 1024).toFixed(0)} KB`
+                        : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
+                    </span>
+                    <button
+                      type="button" disabled={busy}
+                      onClick={() => setAnexos(prev => prev.filter((_, j) => j !== i))}
+                      style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}
+                      title="Remover"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 8 — Prazo */}
           <div>
             <label style={lbl}>Prazo desejado *</label>
             <input style={inp} type="date" disabled={busy}

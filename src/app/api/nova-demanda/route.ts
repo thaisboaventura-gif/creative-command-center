@@ -87,6 +87,27 @@ async function findAccountId(base: string, auth: string, hint: string): Promise<
   } catch { return null; }
 }
 
+async function uploadAttachments(base: string, auth: string, issueKey: string, files: File[]): Promise<void> {
+  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}/attachments`;
+  for (const file of files) {
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "X-Atlassian-Token": "no-check",
+          // Note: do NOT set Content-Type — browser must set multipart boundary automatically
+        },
+        body: fd,
+      });
+    } catch (err) {
+      console.warn("[nova-demanda] attachment upload failed:", err);
+    }
+  }
+}
+
 async function forceSetCountry(base: string, auth: string, issueKey: string): Promise<void> {
   const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json", "Content-Type": "application/json" };
@@ -250,7 +271,26 @@ async function checkViability(
 
 export async function POST(req: Request) {
   try {
-    const body: NovaDemandaBody = await req.json();
+    let body: NovaDemandaBody;
+    let attachments: File[] = [];
+
+    const contentType = req.headers.get("content-type") ?? "";
+    if (contentType.includes("multipart/form-data")) {
+      const fd = await req.formData();
+      const raw: Record<string, unknown> = {};
+      for (const [key, val] of fd.entries()) {
+        if (key === "files") {
+          if (val instanceof File && val.size > 0) attachments.push(val);
+        } else {
+          const str = val as string;
+          try { raw[key] = JSON.parse(str); } catch { raw[key] = str; }
+        }
+      }
+      body = raw as unknown as NovaDemandaBody;
+    } else {
+      body = await req.json();
+    }
+
     const { mode, nomeTask, area, areaOutros, tipos, estaticos, videos,
             sobreOQue, pedidoResumido, mensagem, prazo,
             solicitanteNome, solicitanteEmail } = body;
@@ -350,6 +390,11 @@ export async function POST(req: Request) {
 
     const jiraBase = parentIssue?.self ? parentIssue.self.split("/rest/")[0] : base.replace(/\/$/, "");
     const jiraLink = issueKey ? `${jiraBase}/browse/${issueKey}` : null;
+
+    // Upload attachments (if any)
+    if (issueKey && attachments.length > 0) {
+      await uploadAttachments(base, auth, issueKey, attachments);
+    }
 
     // Force-create: subtasks unassigned, Slack alert
     if (forceUnassigned) {
