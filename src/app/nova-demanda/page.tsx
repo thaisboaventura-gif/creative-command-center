@@ -496,8 +496,15 @@ export default function NovaDemanda() {
           {/* 8 — Prazo */}
           <div>
             <label style={lbl}>Prazo desejado *</label>
-            <input style={inp} type="date" disabled={busy}
-              value={form.prazo} onChange={e => set("prazo", e.target.value)} />
+            <input
+              style={{ ...inp, cursor: "pointer" }}
+              type="date" disabled={busy}
+              value={form.prazo}
+              onChange={e => set("prazo", e.target.value)}
+              onClick={e => {
+                try { (e.target as HTMLInputElement).showPicker(); } catch { /* navegador sem suporte */ }
+              }}
+            />
           </div>
 
           {/* 8 — Solicitante */}
