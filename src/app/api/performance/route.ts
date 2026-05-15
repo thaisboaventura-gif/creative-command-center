@@ -162,7 +162,7 @@ export async function GET(req: Request) {
     // who created them. The debug meta will show reporters/assignees so we can refine.
     const allTeam = [...PERFORMANCE_REPORTERS, ...PERFORMANCE_ASSIGNEES].join(", ");
     const currentYear = new Date().getFullYear();
-    const jql2 = `project = ${project} AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY created DESC`;
+    const jql2 = `project = ${project} AND statusCategory = Done AND issuetype not in subTaskIssueTypes() AND created >= "${currentYear}-01-01" ORDER BY created DESC`;
 
     // Run both queries in parallel, then merge (deduplicate by key)
     const [raw1, raw2] = await Promise.all([
