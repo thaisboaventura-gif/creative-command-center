@@ -426,12 +426,19 @@ export default function Dashboard() {
                     const top = bar.lane * 32;
 
                     const isWaiting = bar.task.status === "in_review";
+                    const _today = new Date(); _today.setHours(0,0,0,0);
+                    const _due = bar.task.dueDate ? new Date(bar.task.dueDate) : null;
+                    if (_due) _due.setHours(0,0,0,0);
+                    const isDueToday = !!_due && _due.getTime() === _today.getTime();
+
                     const barBg = bar.isDone
                       ? "#9ca3af"
                       : isWaiting
                       ? "#fca5a5"
                       : bar.overdue
                       ? "#ef4444"
+                      : isDueToday
+                      ? "#fbbf24"
                       : bar.color;
                     const barLabel = bar.isDone
                       ? `✅ ${bar.task.title}`
@@ -441,13 +448,17 @@ export default function Dashboard() {
                       ? `⏳ ${bar.task.title}`
                       : bar.overdue
                       ? `⚠️ ${bar.task.title}`
+                      : isDueToday
+                      ? `📅 ${bar.task.title}`
                       : bar.task.title;
                     const titleTip = bar.isDone
                       ? `✅ Entregue · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
                       : bar.overdue
                       ? `⚠️ ATRASADA · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
+                      : isDueToday
+                      ? `📅 Entrega hoje · ${bar.task.key} · ${bar.task.title}`
                       : isWaiting
-                      ? `🕐 Aguardando feedback · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`
+                      ? `⏳ Aguardando feedback · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`
                       : `${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`;
 
                     return (
@@ -504,6 +515,10 @@ export default function Dashboard() {
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 24, height: 8, borderRadius: 999, background: "#5b6cff" }} />
           uma cor por projeto
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 24, height: 8, borderRadius: 999, background: "#fbbf24" }} />
+          entrega hoje
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 24, height: 8, borderRadius: 999, background: "#ef4444" }} />

@@ -80,6 +80,7 @@ interface GanttBar {
   overdue: boolean;
   isDone: boolean;
   isWaiting: boolean;
+  isDueToday: boolean;
   startsBefore: boolean;
   color: string;
 }
@@ -119,12 +120,17 @@ function calcBar(
   if (endCol === -1) endCol = startCol;
   if (endCol < startCol) endCol = startCol;
 
-  const isDone    = status === "done";
-  const isWaiting = status === "in_review";
-  const overdue   = !isDone && due < now;
-  const color     = isDone ? "#9ca3af" : isWaiting ? "#fca5a5" : overdue ? "#ef4444" : projectColor(title);
+  const isDone     = status === "done";
+  const isWaiting  = status === "in_review";
+  const overdue    = !isDone && due < now;
+  const isDueToday = !isDone && due.getTime() === now.getTime();
+  const color      = isDone    ? "#9ca3af"
+                   : isWaiting ? "#fca5a5"
+                   : overdue   ? "#ef4444"
+                   : isDueToday ? "#fbbf24"
+                   : projectColor(title);
 
-  return { startCol: startCol + 1, endCol: endCol + 1, overdue, isDone, isWaiting, startsBefore, color };
+  return { startCol: startCol + 1, endCol: endCol + 1, overdue, isDone, isWaiting, isDueToday, startsBefore, color };
 }
 
 /* ─── Storage helpers ─── */
