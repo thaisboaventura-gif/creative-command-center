@@ -8,7 +8,7 @@ import {
   DAILY_CAPACITY,
 } from "@/lib/scheduler";
 
-export const dynamic   = "force-dynamic";
+export const dynamic    = "force-dynamic";
 export const maxDuration = 60;
 
 /* ─── Config ─── */
@@ -21,26 +21,29 @@ const JIRA_AUTH = () => {
 };
 const PROJECT = () => process.env.JIRA_PROJECT_KEY?.trim() || "BDSL";
 
-// Country field candidates (tries each until one works)
 const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
 
 /* ─── Types ─── */
 
+interface CriativoCard {
+  tipo: string;
+  formatos: string[];
+  formatoOutros?: string;
+  dimensoes?: string;
+  tipoOutrosDesc?: string;
+  duracao?: string;
+  direcao?: string;
+  docLink?: string;
+}
+
 interface NovaDemandaBody {
   mode: "validate" | "create" | "force_create";
-  // Fields
   nomeTask: string;
   area: string;
   areaOutros?: string;
-  tipos: string[];
-  estaticos: number;
-  videos: number;
-  dimensoesEstaticos?: string;
-  dimensoesVideos?: string;
-  duracaoVideos?: string;
-  sobreOQue: string;
-  pedidoResumido: string;
-  mensagem: string;
+  contexto: string;
+  objetivo: string;
+  criativos: CriativoCard[];
   prazo: string;
   solicitanteNome: string;
   solicitanteEmail: string;
@@ -54,6 +57,28 @@ export interface SubtaskResult {
   key: string | null;
 }
 
+/* ─── Type helpers ─── */
+
+const isVideoTipo = (t: string) => t === "Vídeo" || t === "Motion";
+const isPPTTipo   = (t: string) => t === "PPT/Apresentação";
+
+function deriveTipos(criativos: CriativoCard[]): string[] {
+  const tipos: string[] = [];
+  const hasStatic = criativos.some(c => c.tipo && !isVideoTipo(c.tipo) && !isPPTTipo(c.tipo));
+  const hasVideo  = criativos.some(c => isVideoTipo(c.tipo));
+  if (hasStatic) tipos.push("Anúncio/Performance");
+  if (hasVideo)  tipos.push("Motion/Vídeo");
+  return tipos;
+}
+
+function countStatic(criativos: CriativoCard[]) {
+  return criativos.filter(c => c.tipo && !isVideoTipo(c.tipo) && !isPPTTipo(c.tipo)).length;
+}
+
+function countVideo(criativos: CriativoCard[]) {
+  return criativos.filter(c => isVideoTipo(c.tipo)).length;
+}
+
 /* ─── Helpers ─── */
 
 function countWorkDays(from: Date, to: Date): number {
@@ -65,16 +90,6 @@ function countWorkDays(from: Date, to: Date): number {
     cur.setDate(cur.getDate() + 1);
   }
   return count;
-}
-
-function addWorkDays(from: Date, n: number): Date {
-  const r = new Date(from);
-  let i = 0;
-  while (i < n) {
-    r.setDate(r.getDate() + 1);
-    if (r.getDay() !== 0 && r.getDay() !== 6) i++;
-  }
-  return r;
 }
 
 async function findAccountId(base: string, auth: string, hint: string): Promise<string | null> {
@@ -98,7 +113,6 @@ async function uploadAttachments(base: string, auth: string, issueKey: string, f
         headers: {
           Authorization: `Basic ${auth}`,
           "X-Atlassian-Token": "no-check",
-          // Note: do NOT set Content-Type — browser must set multipart boundary automatically
         },
         body: fd,
       });
@@ -109,7 +123,7 @@ async function uploadAttachments(base: string, auth: string, issueKey: string, f
 }
 
 async function forceSetCountry(base: string, auth: string, issueKey: string): Promise<void> {
-  const url = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
+  const url     = `${base.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}`;
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json", "Content-Type": "application/json" };
   for (const field of COUNTRY_CANDIDATES) {
     const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify({ fields: { [field]: [{ value: "Brasil" }] } }) });
@@ -119,7 +133,7 @@ async function forceSetCountry(base: string, auth: string, issueKey: string): Pr
 
 async function createJiraIssue(
   base: string, auth: string, project: string,
-  summary: string, descText: string, duedate: string,
+  summary: string, description: object, duedate: string,
   assigneeId: string | null, reporterId: string | null, parentKey?: string
 ): Promise<{ key: string; self?: string } | null> {
   const url     = `${base.replace(/\/$/, "")}/rest/api/3/issue`;
@@ -127,12 +141,12 @@ async function createJiraIssue(
   const fields: Record<string, unknown> = {
     project:     { key: project },
     summary,
-    description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: descText }] }] },
+    description,
     issuetype:   parentKey ? { name: "Subtask" } : { name: "Task" },
-    ...(duedate     ? { duedate }                             : {}),
-    ...(assigneeId  ? { assignee: { accountId: assigneeId } } : {}),
+    ...(duedate    ? { duedate }                             : {}),
+    ...(assigneeId ? { assignee: { accountId: assigneeId } } : {}),
     ...(reporterId && !parentKey ? { reporter: { accountId: reporterId } } : {}),
-    ...(parentKey   ? { parent: { key: parentKey } }          : {}),
+    ...(parentKey  ? { parent: { key: parentKey } }          : {}),
   };
 
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields }) });
@@ -143,25 +157,94 @@ async function createJiraIssue(
     const errorBody = await res.text();
     console.error("[createJiraIssue] Jira error response:", errorBody);
 
-    // 400 with reporter → field is frequently rejected when "Modify Reporter"
-    // permission is disabled; retry without it so the task still gets created
     if (res.status === 400 && fields.reporter) {
       console.warn("[createJiraIssue] Retrying WITHOUT reporter field...");
       const { reporter: _r, ...fieldsNoReporter } = fields;
       const retry = await fetch(url, { method: "POST", headers, body: JSON.stringify({ fields: fieldsNoReporter }) });
       if (!retry.ok) {
-        console.error("[createJiraIssue] Retry also failed", retry.status);
-        console.error("[createJiraIssue] Retry error:", await retry.text());
+        console.error("[createJiraIssue] Retry also failed", retry.status, await retry.text());
         return null;
       }
       console.log("[createJiraIssue] Retry SUCCESS (without reporter)");
       return retry.json();
     }
-
     return null;
   }
-
   return res.json();
+}
+
+/* ─── ADF builder ─── */
+
+function t(text: string) { return { type: "text", text }; }
+function bold(text: string) { return { type: "text", text, marks: [{ type: "strong" }] }; }
+function heading(level: number, text: string) {
+  return { type: "heading", attrs: { level }, content: [{ type: "text", text }] };
+}
+function para(...nodes: object[]) { return { type: "paragraph", content: nodes }; }
+function rule() { return { type: "rule" }; }
+
+function buildADF(body: NovaDemandaBody): object {
+  const { contexto, objetivo, criativos, solicitanteNome, solicitanteEmail, area, areaOutros, prazo } = body;
+  const areaLabel = area === "Outros" ? (areaOutros || "Outros") : area;
+  const content: object[] = [];
+
+  // Contexto
+  content.push(heading(2, "Contexto"));
+  content.push(para(t(contexto || "(não informado)")));
+  content.push(rule());
+
+  // Objetivo
+  content.push(heading(2, "Objetivo"));
+  content.push(para(t(objetivo || "(não informado)")));
+  content.push(rule());
+
+  // Criativos
+  content.push(heading(2, `Criativos (${criativos.length})`));
+
+  for (let i = 0; i < criativos.length; i++) {
+    const c = criativos[i];
+    content.push(heading(3, `Criativo ${i + 1} — ${c.tipo || "Sem tipo"}`));
+
+    if (isPPTTipo(c.tipo)) {
+      if (c.docLink) {
+        content.push(para(bold("Link para documento: "), t(c.docLink)));
+      } else {
+        content.push(para(t("Sem link de documento informado.")));
+      }
+    } else {
+      if (c.formatos && c.formatos.length > 0) {
+        const fmtParts = c.formatos.map(f => f === "Outros" && c.formatoOutros ? `Outros (${c.formatoOutros})` : f);
+        content.push(para(bold("Formatos: "), t(fmtParts.join(", "))));
+      }
+      if (c.tipo === "Banner físico" && c.dimensoes) {
+        content.push(para(bold("Dimensões: "), t(c.dimensoes)));
+      }
+      if (c.tipo === "Outros" && c.tipoOutrosDesc) {
+        content.push(para(bold("Formato: "), t(c.tipoOutrosDesc)));
+      }
+      if (isVideoTipo(c.tipo) && c.duracao) {
+        content.push(para(bold("Duração: "), t(c.duracao)));
+      }
+      if (c.direcao) {
+        content.push(para(bold("Direção criativa:")));
+        content.push(para(t(c.direcao)));
+      } else {
+        content.push(para(t("Sem direção criativa informada.")));
+      }
+    }
+
+    if (i < criativos.length - 1) content.push(rule());
+  }
+
+  content.push(rule());
+
+  // Info block
+  content.push(heading(2, "Informações"));
+  content.push(para(bold("Solicitante: "), t(`${solicitanteNome} <${solicitanteEmail}>`)));
+  content.push(para(bold("Área: "), t(areaLabel)));
+  content.push(para(bold("Prazo: "), t(prazo)));
+
+  return { type: "doc", version: 1, content };
 }
 
 /* ─── Claude validation ─── */
@@ -186,16 +269,15 @@ async function callClaude(system: string, user: string): Promise<string> {
 const VALIDATION_SYSTEM = `Você valida briefings criativos. Seja PERMISSIVO — o time resolve detalhes de execução.
 
 BLOQUEAR (needs_clarification) APENAS SE:
-1. Tipo de peça indefinido — não dá pra saber se é estático, vídeo ou copy.
-2. Anúncio/Performance com estáticos > 0 E campo de dimensões vazio — specs exatas são obrigatórias para rodar na plataforma.
-3. Motion/Vídeo com vídeos > 0 E dimensões/duração ausentes — necessário para produção.
-4. Todos os 3 campos descritivos (sobre, pedido, mensagem) vazios ou completamente ininteligíveis.
+1. Nenhum criativo tem tipo selecionado — não dá pra saber o que produzir.
+2. Criativo do tipo Vídeo ou Motion sem nenhuma informação de duração e sem direção criativa.
+3. Contexto E objetivo completamente vazios ou ininteligíveis.
 
 NUNCA BLOQUEAR POR:
 - Público-alvo não detalhado
 - Tom de comunicação não especificado
+- Formatos não selecionados (são opcionais)
 - Detalhes de execução (cores, fontes, estilo visual, referências)
-- Número aproximado ou estimado de peças
 - Contextos internos conhecidos: D2C, Summit, SMB, ADS, PMM, Elo7, Nuvemshop, lojistas
 
 SE TIVER DÚVIDA → retorne { "ok": true }
@@ -208,17 +290,15 @@ ou
 Máximo 1 pergunta. Sem texto fora do JSON.`;
 
 async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; questions?: string[] }> {
-  const tipo  = body.tipos.join(", ");
-  const user  = `
-Tipo(s): ${tipo}
-Estáticos: ${body.estaticos}
-Vídeos: ${body.videos}
-Dimensões estáticos: ${body.dimensoesEstaticos || "(não informado)"}
-Dimensões vídeos: ${body.dimensoesVideos || "(não informado)"}
-Duração vídeos: ${body.duracaoVideos || "(não informado)"}
-Sobre: ${body.sobreOQue}
-Pedido: ${body.pedidoResumido}
-Mensagem: ${body.mensagem}
+  const criativosSummary = body.criativos.map((c, i) =>
+    `Criativo ${i + 1}: tipo="${c.tipo}", formatos=[${(c.formatos || []).join(", ")}], duracao="${c.duracao || ""}", direcao="${c.direcao || ""}"`
+  ).join("\n");
+
+  const user = `
+Contexto: ${body.contexto}
+Objetivo: ${body.objetivo}
+Criativos:
+${criativosSummary}
   `.trim();
 
   const raw   = await callClaude(VALIDATION_SYSTEM, user);
@@ -241,26 +321,22 @@ async function checkViability(
   body: NovaDemandaBody,
   pipeline: Record<string, { daily: Map<string, number> }>
 ): Promise<ViabilityResult> {
-  const { estaticos, videos, prazo, tipos } = body;
+  const staticPieces = countStatic(body.criativos);
+  const videoPieces  = countVideo(body.criativos);
+  const { prazo }    = body;
 
-  // Hour estimates per responsible:
-  //   Eduardo : estáticos × 1h  +  vídeos × 4h (layout)
-  //   Larissa : vídeos × 4h (motion)
-  //   Beatriz : 2h fixas se houver Copy
-  const hasCopy   = tipos.some(t => t === "Copy");
-  const eduHours  = estaticos * 1 + videos * 4;
-  const larHours  = videos * 4;
-  const beatHours = hasCopy ? 2 : 0;
-  const totalHours = eduHours + larHours + beatHours;
+  // Eduardo: statics × 1h + videos × 4h
+  // Larissa: videos × 4h (motion/video)
+  const eduHours  = staticPieces * 1 + videoPieces * 4;
+  const larHours  = videoPieces * 4;
+  const totalHours = eduHours + larHours;
 
   if (totalHours === 0) return { viable: true };
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const D     = parseLocalDate(prazo);
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const D        = parseLocalDate(prazo);
   const workDays = Math.max(1, countWorkDays(today, D));
 
-  // ── Available capacity in the [today, prazo] window ──────────────────────
-  // Total capacity in window minus hours already committed (from pipeline)
   function availCap(person: string): number {
     const cap   = DAILY_CAPACITY[person] ?? 5.5;
     const pLoad = pipeline[person];
@@ -274,29 +350,22 @@ async function checkViability(
     return Math.max(0, workDays * cap - booked);
   }
 
-  const eduAvail  = availCap("eduardo");
-  const larAvail  = availCap("larissa");
-  const beatAvail = availCap("beatriz");
+  const eduAvail = availCap("eduardo");
+  const larAvail = availCap("larissa");
 
-  const eduViable  = eduHours  === 0 || eduHours  <= eduAvail;
-  const larViable  = larHours  === 0 || larHours  <= larAvail;
-  const beatViable = beatHours === 0 || beatHours <= beatAvail;
+  const eduViable = eduHours === 0 || eduHours <= eduAvail;
+  const larViable = larHours === 0 || larHours <= larAvail;
 
-  if (eduViable && larViable && beatViable) return { viable: true };
+  if (eduViable && larViable) return { viable: true };
 
-  // ── Minimum viable date — walkforward using real pipeline load ────────────
-  // Walk day-by-day from today, accumulating *free* hours (cap − already booked).
-  // This respects that on a day where someone is already 80% committed,
-  // only 20% of their capacity is available for this new task.
   function minDateForPerson(person: string, hoursNeeded: number): Date {
     if (hoursNeeded <= 0) return new Date(today);
     const cap = DAILY_CAPACITY[person] ?? 5.5;
     let accum = 0;
     const d   = new Date(today);
-    // Safety cap: never walk more than 120 days forward
     for (let i = 0; i < 120 && accum < hoursNeeded; i++) {
       d.setDate(d.getDate() + 1);
-      if (d.getDay() === 0 || d.getDay() === 6) continue; // skip weekends
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
       const booked = pipeline[person]?.daily.get(formatDate(d)) ?? 0;
       accum += Math.max(0, cap - booked);
     }
@@ -304,11 +373,9 @@ async function checkViability(
   }
 
   const candidates: Date[] = [];
-  if (eduHours  > 0) candidates.push(minDateForPerson("eduardo", eduHours));
-  if (larHours  > 0) candidates.push(minDateForPerson("larissa", larHours));
-  if (beatHours > 0) candidates.push(minDateForPerson("beatriz", beatHours));
+  if (eduHours > 0) candidates.push(minDateForPerson("eduardo", eduHours));
+  if (larHours > 0) candidates.push(minDateForPerson("larissa", larHours));
 
-  // The task is only done when ALL responsible have finished their part
   const minDate = candidates.reduce((latest, d) => (d > latest ? d : latest), new Date(today));
   const minDays = Math.max(1, countWorkDays(today, minDate));
 
@@ -317,7 +384,7 @@ async function checkViability(
     min_date: formatDate(minDate),
     min_days: minDays,
     hours_needed: totalHours,
-    capacity_available: eduAvail + larAvail + (hasCopy ? beatAvail : 0),
+    capacity_available: eduAvail + larAvail,
   };
 }
 
@@ -330,7 +397,7 @@ export async function POST(req: Request) {
 
     const contentType = req.headers.get("content-type") ?? "";
     if (contentType.includes("multipart/form-data")) {
-      const fd = await req.formData();
+      const fd  = await req.formData();
       const raw: Record<string, unknown> = {};
       for (const [key, val] of fd.entries()) {
         if (key === "files") {
@@ -345,53 +412,57 @@ export async function POST(req: Request) {
       body = await req.json();
     }
 
-    const { mode, nomeTask, area, areaOutros, tipos, estaticos, videos,
-            sobreOQue, pedidoResumido, mensagem, prazo,
-            solicitanteNome, solicitanteEmail } = body;
+    // Ensure criativos is array
+    if (!Array.isArray(body.criativos)) {
+      try { body.criativos = JSON.parse(body.criativos as unknown as string); } catch { body.criativos = []; }
+    }
+
+    const { mode, nomeTask, area, areaOutros, contexto, objetivo, criativos, prazo, solicitanteNome, solicitanteEmail } = body;
 
     const base    = JIRA_BASE();
     const auth    = JIRA_AUTH();
     const project = PROJECT();
 
-    // ── VALIDATE mode ────────────────────────────────────────────────────
+    // ── VALIDATE mode ──────────────────────────────────────────────────────
     if (mode === "validate") {
-      // Step 1: briefing quality
       try {
         const check = await validateBriefing(body);
         if (!check.ok && check.questions?.length) {
           return NextResponse.json({ status: "needs_clarification", questions: check.questions });
         }
-      } catch { /* fail-safe: continue */ }
+      } catch { /* fail-safe */ }
 
-      // Step 2: deadline viability
       try {
         const pipeline  = await fetchPipeline(base, auth, project);
         const viability = await checkViability(body, pipeline);
         if (!viability.viable) {
           return NextResponse.json({
-            status: "deadline_issue",
+            status:             "deadline_issue",
             min_date:           viability.min_date,
             min_days:           viability.min_days,
             hours_needed:       viability.hours_needed,
             capacity_available: viability.capacity_available,
           });
         }
-      } catch { /* fail-safe: continue */ }
+      } catch { /* fail-safe */ }
 
       return NextResponse.json({ status: "ok" });
     }
 
-    // ── CREATE / FORCE_CREATE mode ────────────────────────────────────────
+    // ── CREATE / FORCE_CREATE mode ─────────────────────────────────────────
     const forceUnassigned = mode === "force_create";
     const areaLabel = area === "Outros" ? (areaOutros || "Outros") : area;
 
-    // Fetch pipeline for scheduler (only needed for normal create)
+    // Derive scheduler-compatible tipos from criativos
+    const derivedTipos = deriveTipos(criativos);
+    const descBlob     = `${contexto}. ${objetivo}`;
+
     const pipeline = forceUnassigned ? null : await fetchPipeline(base, auth, project).catch(() => null);
-    const plans = pipeline
-      ? planSubtasks(tipos, `${sobreOQue}. ${pedidoResumido}`, prazo, pipeline)
+    const plans    = pipeline
+      ? planSubtasks(derivedTipos, descBlob, prazo, pipeline)
       : [];
 
-    // Look up reporter + all assignees in parallel
+    // Look up reporter + assignees
     const thaisHint = "thais.boaventura";
     const [reporterAccountId, thaisAccountId, ...assigneeIds] = await Promise.all([
       findAccountId(base, auth, solicitanteNome),
@@ -399,37 +470,24 @@ export async function POST(req: Request) {
       ...plans.map(p => findAccountId(base, auth, p.person)),
     ]);
 
-    // Build parent description
-    const descLines = [
-      `Solicitante: ${solicitanteNome} <${solicitanteEmail}>`,
-      `Área: ${areaLabel}`,
-      `Tipos: ${tipos.join(", ")}`,
-      `Estáticos: ${estaticos}  |  Vídeos: ${videos}`,
-      body.dimensoesEstaticos ? `Dimensões estáticos: ${body.dimensoesEstaticos}` : null,
-      body.dimensoesVideos    ? `Dimensões vídeos: ${body.dimensoesVideos}` : null,
-      body.duracaoVideos      ? `Duração vídeos: ${body.duracaoVideos}` : null,
-      "",
-      `Sobre: ${sobreOQue}`,
-      `Pedido: ${pedidoResumido}`,
-      `Mensagem: ${mensagem}`,
-      `Prazo: ${prazo}`,
-    ].filter(l => l !== null).join("\n");
+    // Build ADF description
+    const adfDescription = buildADF(body);
 
     // Create parent task
     const parentAssignee = forceUnassigned ? thaisAccountId : null;
     const parentIssue    = await createJiraIssue(
       base, auth, project,
       nomeTask,
-      descLines,
+      adfDescription,
       prazo,
       parentAssignee,
       reporterAccountId,
     );
     const issueKey = parentIssue?.key ?? null;
+
     if (issueKey) {
       try { await forceSetCountry(base, auth, issueKey); } catch { /* non-fatal */ }
 
-      // Try to set OWNER field (area) via PUT if configured
       const ownerField = process.env.JIRA_OWNER_FIELD?.trim();
       if (ownerField) {
         try {
@@ -445,17 +503,15 @@ export async function POST(req: Request) {
     const jiraBase = parentIssue?.self ? parentIssue.self.split("/rest/")[0] : base.replace(/\/$/, "");
     const jiraLink = issueKey ? `${jiraBase}/browse/${issueKey}` : null;
 
-    // Upload attachments (if any)
+    // Upload attachments
     if (issueKey && attachments.length > 0) {
       await uploadAttachments(base, auth, issueKey, attachments);
     }
 
-    // Force-create: subtasks unassigned, Slack alert
+    // Force-create path
     if (forceUnassigned) {
-      const subtaskResults: SubtaskResult[] = [];
       if (issueKey) {
-        // Create subtasks for the relevant types, no assignee, deadline = prazo
-        const basicPlans = planSubtasks(tipos, `${sobreOQue}. ${pedidoResumido}`, prazo, {
+        const basicPlans = planSubtasks(derivedTipos, descBlob, prazo, {
           eduardo: { daily: new Map() },
           larissa: { daily: new Map() },
           joao:    { daily: new Map() },
@@ -463,14 +519,14 @@ export async function POST(req: Request) {
           rafa:    { daily: new Map() },
         });
         for (const plan of basicPlans) {
-          const st = await createJiraIssue(base, auth, project,
+          const st = await createJiraIssue(
+            base, auth, project,
             `${nomeTask} | ${plan.label}`,
-            `Subtask de ${plan.label} — prazo: ${plan.deadline}`,
+            { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: `Subtask de ${plan.label} — prazo: ${plan.deadline}` }] }] },
             plan.deadline, null, null, issueKey
           );
           const stKey = st?.key ?? null;
           if (stKey) { try { await forceSetCountry(base, auth, stKey); } catch { /* */ } }
-          subtaskResults.push({ label: plan.label, assignee: "—", deadline: plan.deadline, hours: plan.hours, key: stKey });
         }
       }
 
@@ -481,23 +537,19 @@ export async function POST(req: Request) {
         `🔗 ${jiraLink}`
       );
 
-      return NextResponse.json({
-        status: "created_unassigned",
-        issueKey,
-        jiraLink,
-        reason: "deadline_impossible",
-      });
+      return NextResponse.json({ status: "created_unassigned", issueKey, jiraLink, reason: "deadline_impossible" });
     }
 
-    // Normal create: subtasks with scheduler deadlines + assignees
+    // Normal create: subtasks with scheduler
     const subtaskResults: SubtaskResult[] = [];
     if (issueKey) {
       for (let i = 0; i < plans.length; i++) {
         const plan      = plans[i];
         const accountId = assigneeIds[i] ?? null;
-        const st = await createJiraIssue(base, auth, project,
+        const st = await createJiraIssue(
+          base, auth, project,
           `${nomeTask} | ${plan.label}`,
-          `Subtask de ${plan.label} — estimativa: ${plan.hours}h — prazo: ${plan.deadline}`,
+          { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: `Subtask de ${plan.label} — estimativa: ${plan.hours}h — prazo: ${plan.deadline}` }] }] },
           plan.deadline, accountId, null, issueKey
         );
         const stKey = st?.key ?? null;
@@ -513,16 +565,12 @@ export async function POST(req: Request) {
       `🗂️ *Nova demanda: ${nomeTask}*`,
       `Área: ${areaLabel} | Solicitante: ${solicitanteNome}`,
       `Prazo: ${prazo} (${workDays} dias úteis)`,
+      `${criativos.length} criativo(s): ${criativos.map(c => c.tipo || "—").join(", ")}`,
       subtaskLines,
       `🔗 ${jiraLink}`,
     ].join("\n"));
 
-    return NextResponse.json({
-      status:   "created",
-      issueKey,
-      jiraLink,
-      subtasks: subtaskResults,
-    });
+    return NextResponse.json({ status: "created", issueKey, jiraLink, subtasks: subtaskResults });
 
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

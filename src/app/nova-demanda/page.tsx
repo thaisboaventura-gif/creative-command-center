@@ -6,15 +6,24 @@ import { useState } from "react";
 
 const AREAS = ["Growth", "Performance", "D2C", "Next", "PMM", "RH", "Eventos", "Social", "CTAs", "Outros"];
 
-const TIPOS = [
-  "Anúncio/Performance",
-  "Sinalização/Evento",
-  "Motion/Vídeo",
-  "Copy",
-  "Desdobramento/Adaptação",
-  "Revisão de apresentação",
-  "Banner/Header/WhatsApp image",
+const TIPOS_CRIATIVO = [
+  "Estático META",
+  "Estático WhatsApp",
+  "Header e-mail",
+  "Banner físico",
+  "Banner site/LP",
+  "Vídeo",
+  "Motion",
+  "Carrossel",
+  "Banner web",
+  "PPT/Apresentação",
+  "Outros",
 ];
+
+const FORMATOS = ["4:5", "9:16", "1:1", "16:9", "1.91:1", "4:3", "2:3", "Outros"];
+
+const isVideoTipo = (t: string) => t === "Vídeo" || t === "Motion";
+const isPPTTipo   = (t: string) => t === "PPT/Apresentação";
 
 /* ─── Types ─── */
 
@@ -27,19 +36,24 @@ type PageState =
   | "done"
   | "done_unassigned";
 
-interface FormData {
+interface CriativoCard {
+  tipo: string;
+  formatos: string[];
+  formatoOutros: string;
+  dimensoes: string;
+  tipoOutrosDesc: string;
+  duracao: string;
+  direcao: string;
+  docLink: string;
+}
+
+interface DemandaForm {
   nomeTask: string;
   area: string;
   areaOutros: string;
-  tipos: string[];
-  estaticos: number;
-  videos: number;
-  dimensoesEstaticos: string;
-  dimensoesVideos: string;
-  duracaoVideos: string;
-  sobreOQue: string;
-  pedidoResumido: string;
-  mensagem: string;
+  contexto: string;
+  objetivo: string;
+  criativos: CriativoCard[];
   prazo: string;
   solicitanteNome: string;
   solicitanteEmail: string;
@@ -74,71 +88,119 @@ function formatBR(s: string) {
   return `${d}/${m}/${y}`;
 }
 
-function Counter({ value, max }: { value: string; max: number }) {
-  const n = value.length;
-  const over = n > max;
+function emptyCriativo(): CriativoCard {
+  return {
+    tipo: "", formatos: [], formatoOutros: "", dimensoes: "",
+    tipoOutrosDesc: "", duracao: "", direcao: "", docLink: "",
+  };
+}
+
+function emptyForm(): DemandaForm {
+  return {
+    nomeTask: "", area: "", areaOutros: "",
+    contexto: "", objetivo: "",
+    criativos: [emptyCriativo()],
+    prazo: "", solicitanteNome: "", solicitanteEmail: "",
+  };
+}
+
+function autoResize(el: HTMLTextAreaElement, maxH = 260) {
+  el.style.height = "auto";
+  const sh = el.scrollHeight;
+  el.style.height = Math.min(sh, maxH) + "px";
+  el.style.overflowY = sh > maxH ? "auto" : "hidden";
+}
+
+/* ─── UI Atoms ─── */
+
+function FieldCounter({ n, max }: { n: number; max: number }) {
+  const over = n >= max;
+  const warn = n / max >= 0.8 && !over;
   return (
-    <span style={{ fontSize: 10, color: over ? "#dc2626" : "#9ca3af", marginLeft: 4 }}>
+    <span style={{ fontSize: 10, marginLeft: 4, color: over ? "#dc2626" : warn ? "#d97706" : "#9ca3af" }}>
       {n}/{max}
     </span>
   );
 }
 
-function NumSelect({ value, max, onChange, disabled }: { value: number; max: number; onChange: (v: number) => void; disabled?: boolean }) {
+function OverflowBanner() {
   return (
-    <select
-      value={value}
-      onChange={e => onChange(Number(e.target.value))}
-      disabled={disabled}
-      style={{ ...inp, padding: "7px 10px", cursor: disabled ? "default" : "pointer" }}
-    >
-      {Array.from({ length: max + 1 }, (_, i) => (
-        <option key={i} value={i}>{i === 0 ? "0 (nenhum)" : i}</option>
-      ))}
-    </select>
+    <div style={{
+      fontSize: 11, color: "#dc2626", background: "#fef2f2",
+      border: "1px solid #fecaca", borderRadius: 5, padding: "3px 8px", marginTop: 4,
+    }}>
+      ⚠️ Você atingiu o limite de caracteres
+    </div>
   );
 }
 
 /* ─── Main ─── */
 
-const emptyForm = (): FormData => ({
-  nomeTask: "", area: "", areaOutros: "", tipos: [],
-  estaticos: 0, videos: 0,
-  dimensoesEstaticos: "", dimensoesVideos: "", duracaoVideos: "",
-  sobreOQue: "", pedidoResumido: "", mensagem: "",
-  prazo: "", solicitanteNome: "", solicitanteEmail: "",
-});
-
 export default function NovaDemanda() {
-  const [form, setForm] = useState<FormData>(emptyForm());
+  const [form, setForm]           = useState<DemandaForm>(emptyForm());
   const [pageState, setPageState] = useState<PageState>("idle");
 
   // Clarification
-  const [questions, setQuestions] = useState<string[]>([]);
-  const [clarAnswer, setClarAnswer] = useState("");
+  const [questions, setQuestions]     = useState<string[]>([]);
+  const [clarAnswer, setClarAnswer]   = useState("");
 
   // Deadline issue
   const [deadlineIssue, setDeadlineIssue] = useState<DeadlineIssue | null>(null);
-  const [newPrazo, setNewPrazo] = useState("");
+  const [newPrazo, setNewPrazo]           = useState("");
 
   // Results
-  const [doneResult, setDoneResult] = useState<DoneResult | null>(null);
+  const [doneResult, setDoneResult]             = useState<DoneResult | null>(null);
   const [doneUnassignedKey, setDoneUnassignedKey] = useState<{ key: string; link: string | null } | null>(null);
 
   // Attachments
   const [anexos, setAnexos] = useState<File[]>([]);
 
+  // Paste warning
+  const [pasteBanner, setPasteBanner] = useState(false);
+
   const busy = pageState === "validating" || pageState === "creating";
 
-  function set<K extends keyof FormData>(k: K, v: FormData[K]) {
+  /* ─── Form updaters ─── */
+
+  function setField<K extends keyof DemandaForm>(k: K, v: DemandaForm[K]) {
     setForm(p => ({ ...p, [k]: v }));
   }
 
-  function toggleTipo(t: string) {
-    setForm(p => ({
-      ...p,
-      tipos: p.tipos.includes(t) ? p.tipos.filter(x => x !== t) : [...p.tipos, t],
-    }));
+  function setCriativo<K extends keyof CriativoCard>(i: number, k: K, v: CriativoCard[K]) {
+    setForm(p => {
+      const criativos = [...p.criativos];
+      criativos[i] = { ...criativos[i], [k]: v };
+      return { ...p, criativos };
+    });
+  }
+
+  function toggleFormato(i: number, fmt: string) {
+    setForm(p => {
+      const criativos = [...p.criativos];
+      const c = criativos[i];
+      const formatos = c.formatos.includes(fmt)
+        ? c.formatos.filter(f => f !== fmt)
+        : [...c.formatos, fmt];
+      criativos[i] = { ...c, formatos };
+      return { ...p, criativos };
+    });
+  }
+
+  function setNCriativos(n: number) {
+    const clamped = Math.max(1, Math.min(15, n));
+    setForm(p => {
+      const cur = p.criativos;
+      if (clamped > cur.length) {
+        return { ...p, criativos: [...cur, ...Array(clamped - cur.length).fill(null).map(() => emptyCriativo())] };
+      } else {
+        return { ...p, criativos: cur.slice(0, clamped) };
+      }
+    });
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const text = e.clipboardData.getData("text");
+    if (text.length > 300) setPasteBanner(true);
   }
 
   /* ─── Validate ─── */
@@ -146,9 +208,12 @@ export default function NovaDemanda() {
     setPageState("validating");
     try {
       const body = buildPayload("validate", extraNote);
-      const res = await fetch("/api/nova-demanda", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res  = await fetch("/api/nova-demanda", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const data = await res.json();
-
       if (data.status === "needs_clarification") {
         setQuestions(data.questions ?? []);
         setClarAnswer("");
@@ -158,11 +223,10 @@ export default function NovaDemanda() {
         setNewPrazo(data.min_date ?? "");
         setPageState("deadline_issue");
       } else {
-        // ok — proceed to create
         await doCreate();
       }
     } catch {
-      await doCreate(); // fail-safe
+      await doCreate();
     }
   }
 
@@ -173,10 +237,14 @@ export default function NovaDemanda() {
       const payload = buildPayload("create", extraNote);
       const fd = new FormData();
       for (const [k, v] of Object.entries(payload)) {
-        fd.append(k, Array.isArray(v) ? JSON.stringify(v) : String(v ?? ""));
+        if (typeof v === "object") {
+          fd.append(k, JSON.stringify(v));
+        } else {
+          fd.append(k, String(v ?? ""));
+        }
       }
       anexos.forEach(f => fd.append("files", f));
-      const res = await fetch("/api/nova-demanda", { method: "POST", body: fd });
+      const res  = await fetch("/api/nova-demanda", { method: "POST", body: fd });
       const data = await res.json();
       if (data.status === "created") {
         setDoneResult({ issueKey: data.issueKey, jiraLink: data.jiraLink, subtasks: data.subtasks ?? [] });
@@ -194,10 +262,14 @@ export default function NovaDemanda() {
       const payload = buildPayload("force_create");
       const fd = new FormData();
       for (const [k, v] of Object.entries(payload)) {
-        fd.append(k, Array.isArray(v) ? JSON.stringify(v) : String(v ?? ""));
+        if (typeof v === "object") {
+          fd.append(k, JSON.stringify(v));
+        } else {
+          fd.append(k, String(v ?? ""));
+        }
       }
       anexos.forEach(f => fd.append("files", f));
-      const res = await fetch("/api/nova-demanda", { method: "POST", body: fd });
+      const res  = await fetch("/api/nova-demanda", { method: "POST", body: fd });
       const data = await res.json();
       setDoneUnassignedKey({ key: data.issueKey, link: data.jiraLink });
       setPageState("done_unassigned");
@@ -206,19 +278,23 @@ export default function NovaDemanda() {
 
   function buildPayload(mode: string, extraNote?: string) {
     const prazoToUse = mode === "create" && newPrazo ? newPrazo : form.prazo;
-    const enrichedPedido = extraNote
-      ? `${form.pedidoResumido}\n\n[Complemento]: ${extraNote}`
-      : form.pedidoResumido;
-    return { ...form, prazo: prazoToUse, pedidoResumido: enrichedPedido, mode };
+    const enrichedObjetivo = extraNote
+      ? `${form.objetivo}\n\n[Complemento]: ${extraNote}`
+      : form.objetivo;
+    return { ...form, prazo: prazoToUse, objetivo: enrichedObjetivo, mode };
   }
 
   /* ─── canSubmit ─── */
-  const areaFilled = form.area && (form.area !== "Outros" || form.areaOutros.trim());
+  const areaFilled      = form.area && (form.area !== "Outros" || form.areaOutros.trim());
+  const criativosFilled = form.criativos.length > 0 && form.criativos.every(c => c.tipo !== "");
   const canSubmit = !!(
-    form.nomeTask.trim() && areaFilled && form.tipos.length > 0 &&
-    form.sobreOQue.trim() && form.pedidoResumido.trim() && form.mensagem.trim() &&
+    form.nomeTask.trim() && areaFilled &&
+    form.contexto.trim() && form.objetivo.trim() && criativosFilled &&
     form.prazo && form.solicitanteNome.trim() && form.solicitanteEmail.trim()
   );
+
+  const staticCount = form.criativos.filter(c => c.tipo && !isVideoTipo(c.tipo) && !isPPTTipo(c.tipo)).length;
+  const videoCount  = form.criativos.filter(c => isVideoTipo(c.tipo)).length;
 
   /* ─── Done screens ─── */
 
@@ -292,7 +368,10 @@ export default function NovaDemanda() {
               {doneResult.jiraLink && (
                 <a href={doneResult.jiraLink} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Abrir no Jira ↗</a>
               )}
-              <button onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); setAnexos([]); }} style={btnGhost}>
+              <button
+                onClick={() => { setForm(emptyForm()); setPageState("idle"); setDoneResult(null); setAnexos([]); }}
+                style={btnGhost}
+              >
                 Nova demanda
               </button>
             </div>
@@ -310,17 +389,37 @@ export default function NovaDemanda() {
         <a href="/" style={{ fontSize: 12, color: "#7c3aed", textDecoration: "none" }}>← Painel</a>
         <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: "6px 0 20px" }}>Nova demanda</h1>
 
+        {/* Paste banner */}
+        {pasteBanner && (
+          <div style={{
+            background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8,
+            padding: "10px 14px", marginBottom: 16,
+            display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+          }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>
+              😊 Por favor, preencha os campos um a um. Evite colar documentos completos — cada campo tem um propósito específico.
+            </p>
+            <button
+              onClick={() => setPasteBanner(false)}
+              style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 20, padding: 0, marginLeft: 12, lineHeight: 1 }}
+            >×</button>
+          </div>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
           {/* 1 — Nome da task */}
           <div>
             <label style={lbl}>
               Nome da task *
-              <Counter value={form.nomeTask} max={40} />
+              <FieldCounter n={form.nomeTask.length} max={40} />
             </label>
-            <input style={inp} type="text" maxLength={40} disabled={busy}
-              value={form.nomeTask} onChange={e => set("nomeTask", e.target.value)}
-              placeholder="Ex: SMB ADS" />
+            <input
+              style={inp} type="text" maxLength={40} disabled={busy}
+              value={form.nomeTask} onChange={e => setField("nomeTask", e.target.value)}
+              placeholder="Ex: SMB ADS — Campanha Maio"
+            />
+            {form.nomeTask.length >= 40 && <OverflowBanner />}
           </div>
 
           {/* 2 — Área */}
@@ -331,7 +430,7 @@ export default function NovaDemanda() {
                 const sel = form.area === a;
                 return (
                   <button key={a} type="button" disabled={busy}
-                    onClick={() => set("area", a)}
+                    onClick={() => setField("area", a)}
                     style={{
                       padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: sel ? 700 : 400,
                       border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
@@ -345,106 +444,231 @@ export default function NovaDemanda() {
               })}
             </div>
             {form.area === "Outros" && (
-              <input style={{ ...inp, marginTop: 8 }} type="text" disabled={busy}
-                value={form.areaOutros} onChange={e => set("areaOutros", e.target.value)}
-                placeholder="Qual área?" />
+              <input
+                style={{ ...inp, marginTop: 8 }} type="text" disabled={busy}
+                value={form.areaOutros} onChange={e => setField("areaOutros", e.target.value)}
+                placeholder="Qual área?"
+              />
             )}
           </div>
 
-          {/* 3 — Tipo */}
+          {/* 3 — Contexto */}
           <div>
-            <label style={lbl}>Tipo de peça * (pode selecionar mais de um)</label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-              {TIPOS.map(t => {
-                const sel = form.tipos.includes(t);
-                return (
-                  <button key={t} type="button" disabled={busy}
-                    onClick={() => toggleTipo(t)}
+            <label style={lbl}>
+              Contexto *
+              <FieldCounter n={form.contexto.length} max={100} />
+              <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que motivou esse pedido?</span>
+            </label>
+            <textarea
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 40 }}
+              maxLength={100} disabled={busy}
+              value={form.contexto}
+              onChange={e => { setField("contexto", e.target.value); autoResize(e.target); }}
+              onPaste={handlePaste}
+              placeholder="Ex: Lançamento de nova funcionalidade de pagamentos para lojistas SMB"
+            />
+            {form.contexto.length >= 100 && <OverflowBanner />}
+          </div>
+
+          {/* 4 — Objetivo */}
+          <div>
+            <label style={lbl}>
+              Objetivo *
+              <FieldCounter n={form.objetivo.length} max={700} />
+              <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que essa campanha precisa gerar?</span>
+            </label>
+            <textarea
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 80 }}
+              maxLength={700} disabled={busy}
+              value={form.objetivo}
+              onChange={e => { setField("objetivo", e.target.value); autoResize(e.target); }}
+              onPaste={handlePaste}
+              placeholder="Ex: Gerar conversões de trial para plano pago entre lojistas que visitaram a LP de planos nos últimos 30 dias. Público-alvo: lojistas SMB Brasil, segmento moda."
+            />
+            {form.objetivo.length >= 700 && <OverflowBanner />}
+          </div>
+
+          {/* 5 — Criativos */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <label style={{ ...lbl, marginBottom: 0 }}>Criativos *</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "#6b7280" }}>Quantidade:</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button
+                    type="button" disabled={busy || form.criativos.length <= 1}
+                    onClick={() => setNCriativos(form.criativos.length - 1)}
                     style={{
-                      padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: sel ? 600 : 400,
-                      border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
-                      background: sel ? "#ede9fe" : "white",
-                      color: sel ? "#7c3aed" : "#6b7280",
-                      cursor: busy ? "default" : "pointer", transition: "all .1s",
-                    }}>
-                    {sel ? "✓ " : ""}{t}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 4 — Número de peças */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={lbl}>Estáticos</label>
-              <NumSelect value={form.estaticos} max={50} disabled={busy} onChange={v => set("estaticos", v)} />
-            </div>
-            <div>
-              <label style={lbl}>Vídeos</label>
-              <NumSelect value={form.videos} max={20} disabled={busy} onChange={v => set("videos", v)} />
-            </div>
-          </div>
-
-          {/* 5 — Dimensões (condicionais) */}
-          {form.estaticos > 0 && (
-            <div>
-              <label style={lbl}>Dimensões dos estáticos</label>
-              <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={2} disabled={busy}
-                value={form.dimensoesEstaticos} onChange={e => set("dimensoesEstaticos", e.target.value)}
-                placeholder="Ex: 1080×1080, 1080×1920" />
-            </div>
-          )}
-          {form.videos > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div>
-                <label style={lbl}>Dimensões dos vídeos</label>
-                <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={2} disabled={busy}
-                  value={form.dimensoesVideos} onChange={e => set("dimensoesVideos", e.target.value)}
-                  placeholder="Ex: 9:16, 1:1, 4:5" />
-              </div>
-              <div>
-                <label style={lbl}>Duração dos vídeos</label>
-                <input style={inp} type="text" disabled={busy}
-                  value={form.duracaoVideos} onChange={e => set("duracaoVideos", e.target.value)}
-                  placeholder="Ex: 15s, 30s" />
+                      width: 28, height: 28, borderRadius: 6, border: "1px solid #d1d5db",
+                      background: "white", cursor: form.criativos.length <= 1 || busy ? "default" : "pointer",
+                      fontSize: 16, fontWeight: 600, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center",
+                      opacity: form.criativos.length <= 1 ? 0.3 : 1,
+                    }}
+                  >−</button>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#111", minWidth: 24, textAlign: "center" }}>
+                    {form.criativos.length}
+                  </span>
+                  <button
+                    type="button" disabled={busy || form.criativos.length >= 15}
+                    onClick={() => setNCriativos(form.criativos.length + 1)}
+                    style={{
+                      width: 28, height: 28, borderRadius: 6, border: "1px solid #d1d5db",
+                      background: "white", cursor: form.criativos.length >= 15 || busy ? "default" : "pointer",
+                      fontSize: 16, fontWeight: 600, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center",
+                      opacity: form.criativos.length >= 15 ? 0.3 : 1,
+                    }}
+                  >+</button>
+                </div>
               </div>
             </div>
-          )}
 
-          {/* 6 — Descritivo */}
-          <div>
-            <label style={lbl}>
-              Sobre o que? *
-              <Counter value={form.sobreOQue} max={500} />
-            </label>
-            <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={500} disabled={busy}
-              value={form.sobreOQue} onChange={e => set("sobreOQue", e.target.value)}
-              placeholder="Ex: Campanha SMB ADS para lojistas que visitaram a LP de planos" />
-          </div>
-          <div>
-            <label style={lbl}>
-              Pedido resumido *
-              <Counter value={form.pedidoResumido} max={1000} />
-            </label>
-            <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={1000} disabled={busy}
-              value={form.pedidoResumido} onChange={e => set("pedidoResumido", e.target.value)}
-              placeholder="Ex: 6 estáticos Meta Ads + 2 vídeos 9:16 para SMB ADS" />
-          </div>
-          <div>
-            <label style={lbl}>
-              Qual mensagem quer passar? *
-              <Counter value={form.mensagem} max={1000} />
-            </label>
-            <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={1000} disabled={busy}
-              value={form.mensagem} onChange={e => set("mensagem", e.target.value)}
-              placeholder="Ex: Abra sua loja com planos a partir de R$0 — SMB ADS" />
+            {form.criativos.map((c, i) => (
+              <div key={i} style={{
+                border: "1px solid #e5e7eb", borderRadius: 10,
+                padding: 16, marginBottom: 12, background: "white",
+              }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#7c3aed", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Criativo {i + 1}
+                </p>
+
+                {/* Tipo */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ ...lbl, fontSize: 11 }}>Tipo *</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5 }}>
+                    {TIPOS_CRIATIVO.map(t => {
+                      const sel = c.tipo === t;
+                      return (
+                        <button key={t} type="button" disabled={busy}
+                          onClick={() => setCriativo(i, "tipo", sel ? "" : t)}
+                          style={{
+                            padding: "4px 11px", borderRadius: 20, fontSize: 11, fontWeight: sel ? 700 : 400,
+                            border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                            background: sel ? "#ede9fe" : "#fafafa",
+                            color: sel ? "#7c3aed" : "#6b7280",
+                            cursor: busy ? "default" : "pointer", transition: "all .1s",
+                          }}>
+                          {t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* PPT special handling */}
+                {isPPTTipo(c.tipo) && (
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 7, padding: "10px 12px", marginBottom: 12 }}>
+                    <p style={{ margin: 0, fontSize: 12, color: "#166534", lineHeight: 1.5 }}>
+                      <strong>OBS:</strong> Nós revisamos o visual das apresentações já com conteúdo fechado. Certifique-se de que o documento está completo antes de enviar.
+                    </p>
+                  </div>
+                )}
+
+                {/* Link para documento (PPT only) */}
+                {isPPTTipo(c.tipo) && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ ...lbl, fontSize: 11 }}>Link para documento</label>
+                    <input
+                      style={{ ...inp, fontSize: 12 }} type="url" disabled={busy}
+                      value={c.docLink} onChange={e => setCriativo(i, "docLink", e.target.value)}
+                      placeholder="https://docs.google.com/presentation/..."
+                    />
+                  </div>
+                )}
+
+                {/* Banner físico — dimensões */}
+                {c.tipo === "Banner físico" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ ...lbl, fontSize: 11 }}>Dimensões (cm ou px)</label>
+                    <input
+                      style={{ ...inp, fontSize: 12 }} type="text" disabled={busy}
+                      value={c.dimensoes} onChange={e => setCriativo(i, "dimensoes", e.target.value)}
+                      placeholder="Ex: 90×120cm, 297×420mm"
+                    />
+                  </div>
+                )}
+
+                {/* Outros tipo — descrição */}
+                {c.tipo === "Outros" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ ...lbl, fontSize: 11 }}>Descrição do formato</label>
+                    <input
+                      style={{ ...inp, fontSize: 12 }} type="text" disabled={busy}
+                      value={c.tipoOutrosDesc} onChange={e => setCriativo(i, "tipoOutrosDesc", e.target.value)}
+                      placeholder="Ex: Assinatura de e-mail, mockup 3D..."
+                    />
+                  </div>
+                )}
+
+                {/* Formatos (not for PPT) */}
+                {!isPPTTipo(c.tipo) && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ ...lbl, fontSize: 11 }}>Formatos</label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5 }}>
+                      {FORMATOS.map(fmt => {
+                        const sel = c.formatos.includes(fmt);
+                        return (
+                          <button key={fmt} type="button" disabled={busy}
+                            onClick={() => toggleFormato(i, fmt)}
+                            style={{
+                              padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: sel ? 700 : 400,
+                              border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                              background: sel ? "#ede9fe" : "#fafafa",
+                              color: sel ? "#7c3aed" : "#6b7280",
+                              cursor: busy ? "default" : "pointer", transition: "all .1s",
+                              fontFamily: "monospace",
+                            }}>
+                            {fmt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Outros formato */}
+                    {c.formatos.includes("Outros") && (
+                      <input
+                        style={{ ...inp, marginTop: 8, fontSize: 12 }} type="text" disabled={busy}
+                        value={c.formatoOutros} onChange={e => setCriativo(i, "formatoOutros", e.target.value)}
+                        placeholder="Descreva o formato (ex: 600×200px)"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Duração (vídeo/motion) */}
+                {isVideoTipo(c.tipo) && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ ...lbl, fontSize: 11 }}>Duração</label>
+                    <input
+                      style={{ ...inp, fontSize: 12 }} type="text" disabled={busy}
+                      value={c.duracao} onChange={e => setCriativo(i, "duracao", e.target.value)}
+                      placeholder="Ex: 15s, 30s"
+                    />
+                  </div>
+                )}
+
+                {/* Direção criativa (not for PPT) */}
+                {!isPPTTipo(c.tipo) && (
+                  <div>
+                    <label style={{ ...lbl, fontSize: 11 }}>
+                      Direção criativa
+                      <FieldCounter n={c.direcao.length} max={500} />
+                      <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 10, marginLeft: 4 }}>mensagem, tom, referências...</span>
+                    </label>
+                    <textarea
+                      style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 60, fontSize: 12 }}
+                      maxLength={500} disabled={busy}
+                      value={c.direcao}
+                      onChange={e => { setCriativo(i, "direcao", e.target.value); autoResize(e.target); }}
+                      onPaste={handlePaste}
+                      placeholder="Ex: Destaque o benefício principal com linguagem direta. Tom descontraído mas profissional. Referência visual: campanha X."
+                    />
+                    {c.direcao.length >= 500 && <OverflowBanner />}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
 
-          {/* 7 — Anexos */}
+          {/* 6 — Anexos */}
           <div>
             <label style={lbl}>
               Anexos <span style={{ fontWeight: 400, color: "#9ca3af" }}>(opcional)</span>
@@ -475,42 +699,35 @@ export default function NovaDemanda() {
             {anexos.length > 0 && (
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
                 {anexos.map((f, i) => (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "5px 10px", background: "#f3f4f6", borderRadius: 6,
-                  }}>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: "#f3f4f6", borderRadius: 6 }}>
                     <span style={{ fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#374151" }}>
                       {f.name}
                     </span>
                     <span style={{ fontSize: 10, color: "#9ca3af", whiteSpace: "nowrap" }}>
-                      {f.size < 1024 * 1024
-                        ? `${(f.size / 1024).toFixed(0)} KB`
-                        : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
+                      {f.size < 1024 * 1024 ? `${(f.size / 1024).toFixed(0)} KB` : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
                     </span>
                     <button
                       type="button" disabled={busy}
                       onClick={() => setAnexos(prev => prev.filter((_, j) => j !== i))}
                       style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}
                       title="Remover"
-                    >
-                      ×
-                    </button>
+                    >×</button>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* 8 — Prazo */}
+          {/* 7 — Prazo */}
           <div>
             <label style={lbl}>Prazo desejado *</label>
             <input
               style={{ ...inp, cursor: "pointer" }}
               type="date" disabled={busy}
               value={form.prazo}
-              onChange={e => set("prazo", e.target.value)}
+              onChange={e => setField("prazo", e.target.value)}
               onClick={e => {
-                try { (e.target as HTMLInputElement).showPicker(); } catch { /* navegador sem suporte */ }
+                try { (e.target as HTMLInputElement).showPicker(); } catch { /* sem suporte */ }
               }}
             />
           </div>
@@ -520,13 +737,13 @@ export default function NovaDemanda() {
             <div>
               <label style={lbl}>Nome completo *</label>
               <input style={inp} type="text" disabled={busy}
-                value={form.solicitanteNome} onChange={e => set("solicitanteNome", e.target.value)}
+                value={form.solicitanteNome} onChange={e => setField("solicitanteNome", e.target.value)}
                 placeholder="Seu nome" />
             </div>
             <div>
               <label style={lbl}>Email *</label>
               <input style={inp} type="email" disabled={busy}
-                value={form.solicitanteEmail} onChange={e => set("solicitanteEmail", e.target.value)}
+                value={form.solicitanteEmail} onChange={e => setField("solicitanteEmail", e.target.value)}
                 placeholder="seu@email.com" />
             </div>
           </div>
@@ -567,7 +784,8 @@ export default function NovaDemanda() {
                 ⚠️ O prazo solicitado não é viável
               </p>
               <p style={{ margin: "0 0 14px", fontSize: 13, color: "#7c2d12", lineHeight: 1.6 }}>
-                Com {form.estaticos} estático{form.estaticos !== 1 ? "s" : ""} + {form.videos} vídeo{form.videos !== 1 ? "s" : ""},
+                Com {staticCount} peça{staticCount !== 1 ? "s" : ""} estática{staticCount !== 1 ? "s" : ""}
+                {videoCount > 0 ? ` + ${videoCount} vídeo${videoCount !== 1 ? "s" : ""}` : ""},
                 precisamos de mínimo <strong>{deadlineIssue.min_days} dias úteis</strong>.<br />
                 <strong>Prazo mínimo viável: {formatBR(deadlineIssue.min_date)}</strong>
               </p>
@@ -578,7 +796,7 @@ export default function NovaDemanda() {
                     min={deadlineIssue.min_date}
                     onChange={e => setNewPrazo(e.target.value)} />
                   <button disabled={!newPrazo || busy} onClick={async () => {
-                    set("prazo", newPrazo);
+                    setField("prazo", newPrazo);
                     await doCreate();
                   }}
                     style={{ ...btnPrimary, width: "auto", padding: "8px 16px", opacity: !newPrazo || busy ? .5 : 1 }}>
@@ -620,15 +838,15 @@ const pg: React.CSSProperties = {
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
   padding: "28px 16px 64px",
 };
-const wrap: React.CSSProperties = { width: "100%", maxWidth: 580, margin: "0 auto" };
-const card: React.CSSProperties = {
+const wrap: React.CSSProperties  = { width: "100%", maxWidth: 600, margin: "0 auto" };
+const card: React.CSSProperties  = {
   background: "white", borderRadius: 12, border: "1px solid #e5e7eb",
   padding: 24, boxShadow: "0 1px 4px rgba(0,0,0,.06)",
 };
-const lbl: React.CSSProperties = {
+const lbl: React.CSSProperties   = {
   display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5,
 };
-const inp: React.CSSProperties = {
+const inp: React.CSSProperties   = {
   width: "100%", padding: "8px 11px", borderRadius: 7,
   border: "1px solid #d1d5db", fontSize: 13, outline: "none",
   fontFamily: "inherit", boxSizing: "border-box", color: "#111", background: "white",
