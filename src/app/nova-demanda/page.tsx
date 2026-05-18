@@ -416,30 +416,30 @@ export default function NovaDemanda() {
           <div>
             <label style={lbl}>
               Sobre o que? *
-              <Counter value={form.sobreOQue} max={200} />
+              <Counter value={form.sobreOQue} max={500} />
             </label>
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={200} disabled={busy}
+              rows={4} maxLength={500} disabled={busy}
               value={form.sobreOQue} onChange={e => set("sobreOQue", e.target.value)}
               placeholder="Ex: Campanha SMB ADS para lojistas que visitaram a LP de planos" />
           </div>
           <div>
             <label style={lbl}>
               Pedido resumido *
-              <Counter value={form.pedidoResumido} max={200} />
+              <Counter value={form.pedidoResumido} max={1000} />
             </label>
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={200} disabled={busy}
+              rows={4} maxLength={1000} disabled={busy}
               value={form.pedidoResumido} onChange={e => set("pedidoResumido", e.target.value)}
               placeholder="Ex: 6 estáticos Meta Ads + 2 vídeos 9:16 para SMB ADS" />
           </div>
           <div>
             <label style={lbl}>
               Qual mensagem quer passar? *
-              <Counter value={form.mensagem} max={200} />
+              <Counter value={form.mensagem} max={1000} />
             </label>
             <textarea style={{ ...inp, resize: "vertical", minHeight: 100, lineHeight: 1.5 }}
-              rows={4} maxLength={200} disabled={busy}
+              rows={4} maxLength={1000} disabled={busy}
               value={form.mensagem} onChange={e => set("mensagem", e.target.value)}
               placeholder="Ex: Abra sua loja com planos a partir de R$0 — SMB ADS" />
           </div>
