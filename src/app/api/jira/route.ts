@@ -67,7 +67,13 @@ const FIELDS = [
   "duedate",
   "labels",
   "timeoriginalestimate",
+  "parent",   // needed to identify parent key when fetching subtasks
   ...COUNTRY_FIELDS,
+];
+
+// Jira usernames used for the subtask-assignee lookup
+const TEAM_USERNAMES = [
+  "eduardo.oliveira", "larissa", "joao", "beatriz", "rafaela.ceragioli", "francisco",
 ];
 
 function isBrasil(issue: JiraIssue): boolean {
@@ -129,12 +135,24 @@ export async function GET() {
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
     const boardJql = `project = ${project} AND status != Done AND assignee IS NOT EMPTY ORDER BY updated DESC`;
-    const newJql = `project = ${project} AND created >= -14d ORDER BY created DESC`;
+    const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
+    // Query 3: active subtasks assigned to any team member — used to pull in
+    // parent tasks where the team member is only at subtask level.
+    const subJql   = `project = ${project} AND issuetype = Subtask AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done`;
 
-    const [boardIssues, newIssues] = await Promise.all([
+    const [boardIssues, newIssues, teamSubsRaw] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
       fetchAllIssues(base, auth, newJql, 1),
+      fetchAllIssues(base, auth, subJql, 3).catch((e) => {
+        console.error("[jira] subJql failed:", e);
+        return [] as JiraIssue[];
+      }),
     ]);
+
+    // Also detect team members via subtasks already embedded in boardIssues
+    // (boardIssues won't have subtask detail, but teamSubsRaw should cover it)
+    const teamSubs = teamSubsRaw;
+    console.log("[jira] teamSubs fetched:", teamSubs.length, "subJql:", subJql);
 
     // Filter to only the direct team members AND country = Brasil
     const teamIssues = boardIssues.filter((issue) =>
@@ -142,6 +160,26 @@ export async function GET() {
         ? isTeamMember(issue.fields.assignee.displayName) && isBrasil(issue)
         : false
     );
+
+    // Build map: parentKey → set of team-member display names who have a subtask there
+    const subParentMap = new Map<string, Set<string>>();
+    for (const sub of teamSubs) {
+      const parentKey = (sub.fields.parent as { key: string } | null)?.key;
+      const name = sub.fields.assignee?.displayName;
+      if (!parentKey || !name) continue;
+      if (!subParentMap.has(parentKey)) subParentMap.set(parentKey, new Set());
+      subParentMap.get(parentKey)!.add(name);
+    }
+
+    console.log("[jira] subParentMap keys:", [...subParentMap.keys()]);
+
+    // Fetch parent tasks not already present in boardIssues
+    const boardKeys  = new Set(boardIssues.map((i) => i.key));
+    const missingKeys = [...subParentMap.keys()].filter((k) => !boardKeys.has(k));
+    console.log("[jira] missingParentKeys:", missingKeys);
+    const extraParents: JiraIssue[] = missingKeys.length
+      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")})`, 1)
+      : [];
 
     // Build team map
     const teamMap = new Map<
@@ -190,6 +228,42 @@ export async function GET() {
         estimatedDetail: est.detail,
         createdAt: issue.fields.created?.split("T")[0] || "",
       });
+    }
+
+    // Parents sourced via subtask assignment — appear in the card of the member
+    // who has a subtask there, even if the parent assignee is not a team member.
+    const allSubParents = [
+      ...boardIssues.filter((i) => subParentMap.has(i.key)),
+      ...extraParents,
+    ];
+
+    for (const issue of allSubParents) {
+      const assigneeNames = subParentMap.get(issue.key);
+      if (!assigneeNames) continue;
+
+      for (const name of assigneeNames) {
+        if (!teamMap.has(name)) {
+          const initials = name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+          teamMap.set(name, { name, avatar: initials, role: "", tasks: [] });
+        }
+        const member = teamMap.get(name)!;
+        // Skip if already present (e.g. parent assignee is also a team member)
+        if (member.tasks.some((t) => t.key === issue.key)) continue;
+
+        const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
+        member.tasks.push({
+          id: issue.key,
+          key: issue.key,
+          title: issue.fields.summary,
+          status: mapStatus(issue.fields.status?.name || ""),
+          priority: mapPriority(issue.fields.priority?.name || "Medium"),
+          assignee: name,
+          dueDate: issue.fields.duedate || null,
+          estimatedHours: est.hours,
+          estimatedDetail: est.detail,
+          createdAt: issue.fields.created?.split("T")[0] || "",
+        });
+      }
     }
 
     const WEEKLY_HOURS = 40;
@@ -255,6 +329,10 @@ export async function GET() {
         teamFiltered: teamIssues.length,
         teamMembers: team.map((m) => m.name),
         allAssignees: [...new Set(boardIssues.map(i => i.fields?.assignee?.displayName).filter(Boolean))],
+        subTasksFound: teamSubs.length,
+        subParentKeys: [...subParentMap.keys()],
+        extraParentsFetched: extraParents.length,
+        subJql,
       },
     });
   } catch (error) {

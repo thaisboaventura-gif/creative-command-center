@@ -12,7 +12,7 @@ const COUNTRY_FIELD = "customfield_15854";
 const FIELDS = [
   "summary", "status", "priority", "assignee", "reporter",
   "duedate", "created", "subtasks", "issuetype", "timeoriginalestimate",
-  "resolutiondate",
+  "resolutiondate", "parent",
   COUNTRY_FIELD,
 ];
 
@@ -159,6 +159,9 @@ export async function GET(req: Request) {
     const reporters = PERFORMANCE_REPORTERS.join(", ");
     const assignees = PERFORMANCE_ASSIGNEES.join(", ");
 
+    // Eduardo's Jira account ID (used for subtask-level filter)
+    const EDUARDO_ACCOUNT_ID = "712020:4648823a-0cdc-4178-b186-597098121542";
+
     // Query 1: active tasks for the performance team (any status)
     const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
 
@@ -169,13 +172,39 @@ export async function GET(req: Request) {
     const currentYear = new Date().getFullYear();
     const jql2 = `project = ${project} AND statusCategory = Done AND issuetype not in subTaskIssueTypes() AND (reporter in (${reporters}) OR assignee in (${allTeam})) AND created >= "${currentYear}-01-01" ORDER BY created DESC`;
 
-    // Run both queries in parallel, then merge (deduplicate by key)
-    const [raw1, raw2] = await Promise.all([
+    // Query 3: active subtasks assigned to Eduardo — used to pull in parent tasks
+    // where Eduardo is only present at subtask level (not parent assignee).
+    const jql3 = `project = ${project} AND issuetype = Subtask AND assignee = "${EDUARDO_ACCOUNT_ID}" AND status != Done`;
+
+    // Run all three queries in parallel, then merge (deduplicate by key)
+    const [raw1, raw2, eduSubs] = await Promise.all([
       fetchIssues(base, auth, jql1),
       fetchIssues(base, auth, jql2),
+      fetchIssues(base, auth, jql3),
     ]);
+
+    // Extract unique parent keys from Eduardo's subtasks
+    const parentKeys = [...new Set(
+      eduSubs
+        .map((s) => (s.fields.parent as { key: string } | null)?.key)
+        .filter(Boolean) as string[]
+    )];
+
+    // Fetch parent tasks not already covered by jql1/jql2
+    const existingKeys = new Set([...raw1, ...raw2].map((i) => i.key));
+    const missingKeys  = parentKeys.filter((k) => !existingKeys.has(k));
+    const raw3 = missingKeys.length
+      ? (await Promise.all(missingKeys.map((k) => fetchSingleIssue(base, auth, k))))
+          .filter(Boolean) as RawIssue[]
+      : [];
+
+    // Deduplicated merge: raw1 → raw2 extras → raw3 extras
     const seen = new Set(raw1.map((i) => i.key));
-    const raw  = [...raw1, ...raw2.filter((i) => !seen.has(i.key))];
+    const raw  = [
+      ...raw1,
+      ...raw2.filter((i) => !seen.has(i.key) && !seen.add(i.key)),
+      ...raw3.filter((i) => !seen.has(i.key)),
+    ];
 
     // Filter by Country = Brasil
     const filtered = raw.filter((i) => isBrasil(i.fields));
