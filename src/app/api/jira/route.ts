@@ -73,7 +73,7 @@ const FIELDS = [
 
 // Jira usernames used for the subtask-assignee lookup
 const TEAM_USERNAMES = [
-  "eduardo.oliveira", "larissa", "joao", "beatriz", "rafaela.ceragioli", "francisco",
+  "eduardo.oliveira", "larissa.delarue", "joao.camargo", "beatriz", "rafaela.ceragioli", "francisco",
 ];
 
 function isBrasil(issue: JiraIssue): boolean {
@@ -138,7 +138,7 @@ export async function GET() {
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
     // Query 3: active subtasks assigned to any team member — used to pull in
     // parent tasks where the team member is only at subtask level.
-    const subJql   = `project = ${project} AND issuetype = Subtask AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done`;
+    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done`;
 
     const [boardIssues, newIssues, teamSubsRaw] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
