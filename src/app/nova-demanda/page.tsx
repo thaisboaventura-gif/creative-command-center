@@ -198,9 +198,9 @@ export default function NovaDemanda() {
     });
   }
 
-  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>, maxLen: number, currentLen: number) {
     const text = e.clipboardData.getData("text");
-    if (text.length > 300) setPasteBanner(true);
+    if (currentLen + text.length > maxLen) setPasteBanner(true);
   }
 
   /* ─── Validate ─── */
@@ -392,12 +392,12 @@ export default function NovaDemanda() {
         {/* Paste banner */}
         {pasteBanner && (
           <div style={{
-            background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8,
+            background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8,
             padding: "10px 14px", marginBottom: 16,
             display: "flex", justifyContent: "space-between", alignItems: "flex-start",
           }}>
-            <p style={{ margin: 0, fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>
-              😊 Por favor, preencha os campos um a um. Evite colar documentos completos — cada campo tem um propósito específico.
+            <p style={{ margin: 0, fontSize: 13, color: "#dc2626", lineHeight: 1.5 }}>
+              ⚠️ O texto colado excede o limite do campo. Por favor, resuma ou distribua o conteúdo nos campos específicos.
             </p>
             <button
               onClick={() => setPasteBanner(false)}
@@ -456,18 +456,18 @@ export default function NovaDemanda() {
           <div>
             <label style={lbl}>
               Contexto *
-              <FieldCounter n={form.contexto.length} max={100} />
+              <FieldCounter n={form.contexto.length} max={500} />
               <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que motivou esse pedido?</span>
             </label>
             <textarea
               style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 40 }}
-              maxLength={100} disabled={busy}
+              maxLength={500} disabled={busy}
               value={form.contexto}
               onChange={e => { setField("contexto", e.target.value); autoResize(e.target); }}
-              onPaste={handlePaste}
+              onPaste={e => handlePaste(e, 500, form.contexto.length)}
               placeholder="Ex: Lançamento de nova funcionalidade de pagamentos para lojistas SMB"
             />
-            {form.contexto.length >= 100 && <OverflowBanner />}
+            {form.contexto.length >= 500 && <OverflowBanner />}
           </div>
 
           {/* 4 — Objetivo */}
@@ -482,7 +482,7 @@ export default function NovaDemanda() {
               maxLength={700} disabled={busy}
               value={form.objetivo}
               onChange={e => { setField("objetivo", e.target.value); autoResize(e.target); }}
-              onPaste={handlePaste}
+              onPaste={e => handlePaste(e, 700, form.objetivo.length)}
               placeholder="Ex: Gerar conversões de trial para plano pago entre lojistas que visitaram a LP de planos nos últimos 30 dias. Público-alvo: lojistas SMB Brasil, segmento moda."
             />
             {form.objetivo.length >= 700 && <OverflowBanner />}
@@ -602,7 +602,7 @@ export default function NovaDemanda() {
                 {/* Formatos (not for PPT) */}
                 {!isPPTTipo(c.tipo) && (
                   <div style={{ marginBottom: 12 }}>
-                    <label style={{ ...lbl, fontSize: 11 }}>Formatos</label>
+                    <label style={{ ...lbl, fontSize: 11 }}>Em quais formatos este criativo deve ser desdobrado?</label>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5 }}>
                       {FORMATOS.map(fmt => {
                         const sel = c.formatos.includes(fmt);
@@ -645,20 +645,19 @@ export default function NovaDemanda() {
                   </div>
                 )}
 
-                {/* Direção criativa (not for PPT) */}
+                {/* Direcionamento (not for PPT) */}
                 {!isPPTTipo(c.tipo) && (
                   <div>
                     <label style={{ ...lbl, fontSize: 11 }}>
-                      Direção criativa
+                      Direcionamento de mensagem / o que a peça precisa comunicar:
                       <FieldCounter n={c.direcao.length} max={500} />
-                      <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 10, marginLeft: 4 }}>mensagem, tom, referências...</span>
                     </label>
                     <textarea
                       style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 60, fontSize: 12 }}
                       maxLength={500} disabled={busy}
                       value={c.direcao}
                       onChange={e => { setCriativo(i, "direcao", e.target.value); autoResize(e.target); }}
-                      onPaste={handlePaste}
+                      onPaste={e => handlePaste(e, 500, c.direcao.length)}
                       placeholder="Ex: Destaque o benefício principal com linguagem direta. Tom descontraído mas profissional. Referência visual: campanha X."
                     />
                     {c.direcao.length >= 500 && <OverflowBanner />}
