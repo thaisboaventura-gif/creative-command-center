@@ -266,27 +266,34 @@ async function callClaude(system: string, user: string): Promise<string> {
   return data.content?.[0]?.text ?? "";
 }
 
-const VALIDATION_SYSTEM = `Você valida briefings criativos para um time de design.
+const VALIDATION_SYSTEM = `Você valida briefings criativos para um time de design. Seja MUITO permissivo.
 
-REGRA ÚNICA: retorne { "ok": false } SOMENTE se os campos contexto E objetivo estiverem AMBOS completamente vazios (string vazia ou ausente).
+REGRA PADRÃO: retorne { "ok": true } em quase todos os casos.
 
-Em qualquer outro caso — mesmo que o briefing seja vago, curto, operacional, sem detalhes, sem público, sem tom — retorne { "ok": true }.
+━━━ NUNCA questionar (sempre "ok": true) ━━━
+• Contexto OU objetivo preenchidos com qualquer conteúdo
+• Tasks operacionais — detectar por palavras na direção criativa ou tipo:
+  editar, legendar, legenda, adaptar, adaptação, formato, cortar, corte,
+  resize, redimensionar, ajustar, versão, desdobrar, desdobramento,
+  já gravado, já filmado, vídeo pronto, arquivo, material pronto
+• Qualquer tipo estático (banner, header, e-mail, carrossel, etc.)
+• PPT / Apresentação
+• Público-alvo, tom, referências, estilo visual — nunca são obrigatórios
 
-NUNCA questionar:
-- Objetivo da campanha (já existe campo próprio)
-- Público-alvo
-- Tom de comunicação
-- Referências visuais
-- Número de peças
-- Formatos, dimensões, duração
-- Tasks operacionais: legenda, edição, adaptação, desdobramento, revisão, banner, header
+━━━ ÚNICO caso onde pode fazer 1 pergunta ━━━
+Todos os critérios abaixo precisam ser verdadeiros SIMULTANEAMENTE:
+1. Existe criativo do tipo "Vídeo" ou "Motion"
+2. A direção criativa sugere produção do zero (contém alguma de:
+   animação, motion, criar do zero, storyboard, cartelas, after effects, produção)
+3. A direção criativa está completamente vazia OU tem menos de 10 caracteres
+→ Somente nesse caso: { "ok": false, "questions": ["Como você imagina esse vídeo? Tem referência, storyboard ou animação de base?"] }
+
+━━━ Bloqueio total ━━━
+• Contexto E objetivo ambos completamente vazios → { "ok": false, "questions": ["Descreva brevemente o contexto e o objetivo desta demanda."] }
 
 SE TIVER QUALQUER DÚVIDA → { "ok": true }
 
-Responda APENAS com JSON válido, sem texto fora do JSON:
-{ "ok": true }
-ou (apenas se AMBOS contexto e objetivo vazios):
-{ "ok": false, "questions": ["Descreva brevemente o contexto e o objetivo desta demanda."] }`;
+Responda APENAS com JSON válido, sem texto fora do JSON.`;
 
 async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; questions?: string[] }> {
   const criativosSummary = body.criativos.map((c, i) =>
