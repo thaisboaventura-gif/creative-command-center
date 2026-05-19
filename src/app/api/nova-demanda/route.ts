@@ -323,18 +323,47 @@ interface ViabilityResult {
   capacity_available?: number;
 }
 
+/** Classify each video criativo and return hour estimates per person.
+ *
+ *  Simple edit  (legenda, corte, resize…)    → 0.5h Larissa only
+ *  Medium edit  (ajuste, adaptação, versão…) → 2h   Larissa only
+ *  New production (default)                  → 4h   Eduardo + 4h Larissa
+ *
+ *  Detection scans: criativo.direcao + criativo.tipoOutrosDesc +
+ *                   body.contexto + body.objetivo (fallback when direcao empty)
+ */
+function estimateVideoHours(body: NovaDemandaBody): { edu: number; lar: number } {
+  const fallbackText = `${body.contexto ?? ""} ${body.objetivo ?? ""}`.toLowerCase();
+  let edu = 0, lar = 0;
+
+  const RE_SIMPLES = /legenda|legendar|cortar|corte\b|resize|redimensionar|adaptar formato|ajustar formato/;
+  const RE_MEDIO   = /\badapt|ajust|vers[aã]o|desdobr/;
+
+  for (const c of body.criativos) {
+    if (!isVideoTipo(c.tipo)) continue;
+    const text = `${c.direcao ?? ""} ${c.tipoOutrosDesc ?? ""}`.toLowerCase().trim()
+      || fallbackText; // use global context when per-criativo text is empty
+
+    if (RE_SIMPLES.test(text))     { lar += 0.5; }
+    else if (RE_MEDIO.test(text))  { lar += 2; }
+    else                           { edu += 4; lar += 4; }
+  }
+  return { edu, lar };
+}
+
 async function checkViability(
   body: NovaDemandaBody,
   pipeline: Record<string, { daily: Map<string, number> }>
 ): Promise<ViabilityResult> {
-  const staticPieces = countStatic(body.criativos);
-  const videoPieces  = countVideo(body.criativos);
-  const { prazo }    = body;
+  const staticPieces              = countStatic(body.criativos);
+  const { edu: videoEdu,
+          lar: videoLar }         = estimateVideoHours(body);
+  const { prazo }                 = body;
 
-  // Eduardo: statics × 1h + videos × 4h
-  // Larissa: videos × 4h (motion/video)
-  const eduHours  = staticPieces * 1 + videoPieces * 4;
-  const larHours  = videoPieces * 4;
+  // Eduardo: statics × 1h + new-video × 4h
+  // Larissa: video work (varies by complexity)
+  const eduHours   = staticPieces * 1 + videoEdu;
+  const larHours   = videoLar;
   const totalHours = eduHours + larHours;
 
   if (totalHours === 0) return { viable: true };

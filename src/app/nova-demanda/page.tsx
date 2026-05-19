@@ -169,6 +169,9 @@ export default function NovaDemanda() {
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Deadline card: toggle date picker
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
   const busy = pageState === "validating" || pageState === "creating";
 
   /* ─── Form updaters ─── */
@@ -353,22 +356,25 @@ export default function NovaDemanda() {
       <div style={pg}>
         <div style={wrap}>
           <div style={{ ...card, borderLeft: "4px solid #f59e0b" }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>⚠️</div>
-            <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 6px" }}>Negociar prazo com Thais Boaventura</h2>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 6px" }}>Task criada.</h2>
             <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.6, margin: "0 0 16px" }}>
-              Essa demanda precisa de mais tempo do que o prazo informado permite.<br />
-              A task foi criada mas precisa de análise antes de ser distribuída.<br />
-              Thais vai entrar em contato em breve.
+              Entre em contato com <strong>Thais Boaventura</strong> para negociar o prazo.
             </p>
-            <div style={{ background: "#fef3c7", borderRadius: 8, padding: "10px 14px", marginBottom: 16, display: "inline-block" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "#92400e" }}>
-                {doneUnassignedKey.key}
-              </span>
-            </div>
+            {doneUnassignedKey.link ? (
+              <a
+                href={doneUnassignedKey.link}
+                target="_blank" rel="noopener noreferrer"
+                style={{ display: "inline-block", background: "#fef3c7", color: "#92400e", fontWeight: 700, fontSize: 14, padding: "6px 16px", borderRadius: 6, textDecoration: "none", marginBottom: 16 }}
+              >
+                {doneUnassignedKey.key} ↗
+              </a>
+            ) : (
+              <div style={{ background: "#fef3c7", borderRadius: 6, padding: "6px 16px", marginBottom: 16, display: "inline-block" }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#92400e" }}>{doneUnassignedKey.key}</span>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 8 }}>
-              {doneUnassignedKey.link && (
-                <a href={doneUnassignedKey.link} target="_blank" rel="noopener noreferrer" style={btnPrimary}>Ver no Jira ↗</a>
-              )}
               <a href="/" style={btnGhost}>Voltar ao painel</a>
             </div>
           </div>
@@ -855,21 +861,39 @@ export default function NovaDemanda() {
                 precisamos de mínimo <strong>{deadlineIssue.min_days} dias úteis</strong>.<br />
                 <strong>Prazo mínimo viável: {formatBR(deadlineIssue.min_date)}</strong>
               </p>
-              <div>
-                <label style={{ ...lbl, color: "#9a3412" }}>📅 Mudar prazo</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input style={{ ...inp, flex: 1 }} type="date" value={newPrazo}
+
+              {/* Toggle date picker */}
+              {!showDatePicker ? (
+                <button
+                  onClick={() => { setShowDatePicker(true); setNewPrazo(""); }}
+                  style={{ ...btnPrimary, background: "#ea580c", width: "auto", padding: "8px 16px", marginBottom: 0 }}>
+                  📅 Mudar prazo
+                </button>
+              ) : (
+                <div style={{ marginTop: 4 }}>
+                  <label style={{ ...lbl, color: "#9a3412", marginBottom: 6 }}>Selecione o novo prazo:</label>
+                  <input
+                    style={{ ...inp, marginBottom: 10 }}
+                    type="date"
+                    value={newPrazo}
                     min={deadlineIssue.min_date}
-                    onChange={e => setNewPrazo(e.target.value)} />
-                  <button disabled={!newPrazo || busy} onClick={async () => {
-                    setField("prazo", newPrazo);
-                    await doCreate();
-                  }}
-                    style={{ ...btnPrimary, width: "auto", padding: "8px 16px", opacity: !newPrazo || busy ? .5 : 1 }}>
-                    {busy ? "Criando..." : "Criar com novo prazo →"}
-                  </button>
+                    autoFocus
+                    onClick={e => {
+                      try { (e.target as HTMLInputElement).showPicker(); } catch { /* sem suporte */ }
+                    }}
+                    onChange={e => setNewPrazo(e.target.value)}
+                  />
+                  {newPrazo && (
+                    <button
+                      disabled={busy}
+                      onClick={async () => { setField("prazo", newPrazo); await doCreate(); }}
+                      style={{ ...btnPrimary, opacity: busy ? .5 : 1 }}>
+                      {busy ? "Criando..." : `Criar com prazo ${formatBR(newPrazo)} →`}
+                    </button>
+                  )}
                 </div>
-              </div>
+              )}
+
               <div style={{ marginTop: 12, borderTop: "1px solid #fed7aa", paddingTop: 12 }}>
                 <button disabled={busy} onClick={doCreateUnassigned}
                   style={{ ...btnGhost, width: "auto", padding: "8px 14px", fontSize: 12, color: "#9a3412", borderColor: "#fed7aa" }}>
