@@ -12,6 +12,7 @@ const COUNTRY_FIELD = "customfield_15854";
 const FIELDS = [
   "summary", "status", "priority", "assignee", "reporter",
   "duedate", "created", "subtasks", "issuetype", "timeoriginalestimate",
+  "resolutiondate",
   COUNTRY_FIELD,
 ];
 
@@ -21,6 +22,7 @@ export interface PerfSubtask {
   status: string;
   assignee: string;
   dueDate: string | null;
+  resolvedAt: string | null;
   createdAt: string;
   estimatedHours: number;
 }
@@ -32,6 +34,7 @@ export interface PerfTask {
   assignee: string;
   reporter: string;
   dueDate: string | null;
+  resolvedAt: string | null;
   createdAt: string;
   estimatedHours: number;
   jiraLink: string;
@@ -105,6 +108,7 @@ function toSubtask(issue: RawIssue, base: string): PerfSubtask {
     status:         mapStatus((f.status as { name: string })?.name ?? ""),
     assignee:       (f.assignee as { displayName: string } | null)?.displayName ?? "",
     dueDate:        (f.duedate as string) ?? null,
+    resolvedAt:     ((f.resolutiondate as string) ?? null)?.split("T")[0] ?? null,
     createdAt:      ((f.created as string) ?? "").split("T")[0],
     estimatedHours: est.hours,
   };
@@ -120,6 +124,7 @@ function toTask(issue: RawIssue, base: string, subtasks: PerfSubtask[]): PerfTas
     assignee:       (f.assignee as { displayName: string } | null)?.displayName ?? "",
     reporter:       (f.reporter as { displayName: string } | null)?.displayName ?? "",
     dueDate:        (f.duedate as string) ?? null,
+    resolvedAt:     ((f.resolutiondate as string) ?? null)?.split("T")[0] ?? null,
     createdAt:      ((f.created as string) ?? "").split("T")[0],
     estimatedHours: est.hours,
     jiraLink:       `${base}/browse/${issue.key}`,

@@ -529,14 +529,20 @@ export default function PerformanceDashboard() {
       ? (hasSubDeadlines ? darkenHex(bar.color, 0.28) : bar.color)
       : null;
 
+    const jiraHref = `${JIRA_BASE}/${taskKey}`;
+
     return (
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: GRID_COLS,
-        borderBottom: "1px solid #f3f4f6",
-        minHeight: 36,
-        background: indent ? "#fafafa" : "white",
-      }}>
+      <div
+        onClick={() => window.open(jiraHref, "_blank")}
+        style={{
+          display: "grid",
+          gridTemplateColumns: GRID_COLS,
+          borderBottom: "1px solid #f3f4f6",
+          minHeight: 36,
+          background: indent ? "#fafafa" : "white",
+          cursor: "pointer",
+        }}
+      >
         {/* ── Label cell ── */}
         <div style={{
           padding: indent ? "0 8px 0 26px" : "0 6px 0 8px",
@@ -544,7 +550,7 @@ export default function PerformanceDashboard() {
         }}>
           {isParent && (
             <button
-              onClick={() => toggleCollapsed(taskKey)}
+              onClick={e => { e.stopPropagation(); toggleCollapsed(taskKey); }}
               title={isCollapsed ? "Expandir subtasks" : "Recolher subtasks"}
               style={{
                 background: "none", border: "none", cursor: "pointer",
@@ -557,24 +563,22 @@ export default function PerformanceDashboard() {
           )}
           {indent && <span style={{ color: "#d1d5db", fontSize: 10, flexShrink: 0 }}>↳</span>}
 
-          <a
-            href={`${JIRA_BASE}/${taskKey}`}
-            target="_blank" rel="noopener noreferrer"
+          <span
             title={task.title}
             style={{
               fontSize: indent ? 11 : 12, color: "#374151",
-              fontWeight: isParent ? 600 : 400, textDecoration: "none",
+              fontWeight: isParent ? 600 : 400,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
             }}
           >
             {task.title}
-          </a>
+          </span>
 
           <StatusBadge status={task.status} />
 
           {isParent && (
             <button
-              onClick={() => hideTask(taskKey)}
+              onClick={e => { e.stopPropagation(); hideTask(taskKey); }}
               title="Ocultar task"
               style={{
                 background: "none", border: "none", cursor: "pointer",
@@ -597,9 +601,20 @@ export default function PerformanceDashboard() {
           const isDueCell   = isEnd && inRange;
           const isPipeStart = isPipeline && cellN === bar!.startCol;
 
-          // Subtask deadlines that fall on this day (parent rows only)
-          const dayMarkers = (isParent && inRange)
-            ? subWithDue.filter((st) => sameDay(parseLocalDate(st.dueDate!), d))
+          // Subtask markers — split by status:
+          // • undone → 📦 on due-date column
+          // • done   → ✅ (or ⚠️✅) on resolvedAt column
+          const undoneMarkers = (isParent && inRange)
+            ? subWithDue.filter((st) =>
+                st.status !== "done" && sameDay(parseLocalDate(st.dueDate!), d)
+              )
+            : [];
+          const doneMarkers = isParent
+            ? subWithDue.filter((st) =>
+                st.status === "done" &&
+                st.resolvedAt &&
+                sameDay(parseLocalDate(st.resolvedAt), d)
+              )
             : [];
 
           const isWeekEnd   = i < days.length - 1 && days[i + 1].getDay() === 1;
@@ -683,16 +698,16 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* 📦 / ✅📦 subtask deadline markers */}
-              {dayMarkers.map((st) => {
+              {/* 📦 undone subtask deadline markers */}
+              {undoneMarkers.map((st) => {
                 const stDateLabel = (() => {
                   const dt = parseLocalDate(st.dueDate!);
                   return `${dt.getDate()}/${dt.getMonth() + 1}`;
                 })();
-                const stDone = st.status === "done";
                 return (
                   <span
                     key={st.key}
+                    onClick={e => e.stopPropagation()}
                     onMouseEnter={(e) => {
                       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                       showTooltip({
@@ -701,7 +716,47 @@ export default function PerformanceDashboard() {
                         link: `${JIRA_BASE}/${st.key}`,
                         x: rect.left + rect.width / 2,
                         y: rect.bottom + 6,
-                        isDone: stDone,
+                        isDone: false,
+                      });
+                    }}
+                    onMouseLeave={hideTooltip}
+                    style={{
+                      position: "absolute",
+                      top: "50%", left: "50%",
+                      transform: "translate(-50%, -50%)",
+                      fontSize: 12, lineHeight: 1,
+                      cursor: "pointer", zIndex: 3,
+                      userSelect: "none",
+                      filter: "drop-shadow(0 1px 1px rgba(0,0,0,.3))",
+                    }}
+                  >
+                    📦
+                  </span>
+                );
+              })}
+
+              {/* ✅ / ⚠️✅ done subtask markers — shown on resolvedAt column */}
+              {doneMarkers.map((st) => {
+                const resolvedDate = parseLocalDate(st.resolvedAt!);
+                const resolvedLabel = `${resolvedDate.getDate()}/${resolvedDate.getMonth() + 1}`;
+                const isLate = st.dueDate
+                  ? resolvedDate > parseLocalDate(st.dueDate)
+                  : false;
+                return (
+                  <span
+                    key={st.key}
+                    onClick={e => e.stopPropagation()}
+                    onMouseEnter={(e) => {
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      showTooltip({
+                        title: isLate
+                          ? `${st.title} — ⚠️ Entregue com atraso`
+                          : st.title,
+                        dateLabel: resolvedLabel,
+                        link: `${JIRA_BASE}/${st.key}`,
+                        x: rect.left + rect.width / 2,
+                        y: rect.bottom + 6,
+                        isDone: true,
                       });
                     }}
                     onMouseLeave={hideTooltip}
@@ -716,8 +771,8 @@ export default function PerformanceDashboard() {
                       display: "flex", alignItems: "center", gap: 1,
                     }}
                   >
-                    {stDone && <span style={{ fontSize: 10 }}>✅</span>}
-                    <span>📦</span>
+                    {isLate && <span style={{ fontSize: 10 }}>⚠️</span>}
+                    <span>✅</span>
                   </span>
                 );
               })}
@@ -753,6 +808,7 @@ export default function PerformanceDashboard() {
         href={tooltip.link}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={e => e.stopPropagation()}
         onMouseEnter={cancelHide}
         onMouseLeave={hideTooltip}
         style={{
