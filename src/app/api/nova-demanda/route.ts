@@ -41,8 +41,8 @@ interface NovaDemandaBody {
   nomeTask: string;
   area: string;
   areaOutros?: string;
-  contexto: string;
-  objetivo: string;
+  contextoObjetivo: string;
+  mensagem?: string;
   criativos: CriativoCard[];
   prazo: string;
   solicitanteNome: string;
@@ -184,65 +184,74 @@ function para(...nodes: object[]) { return { type: "paragraph", content: nodes }
 function rule() { return { type: "rule" }; }
 
 function buildADF(body: NovaDemandaBody): object {
-  const { contexto, objetivo, criativos, solicitanteNome, solicitanteEmail, area, areaOutros, prazo } = body;
+  const { contextoObjetivo, mensagem, criativos, solicitanteNome, solicitanteEmail, area, areaOutros, prazo } = body;
   const areaLabel = area === "Outros" ? (areaOutros || "Outros") : area;
   const content: object[] = [];
 
-  // Contexto
-  content.push(heading(2, "Contexto"));
-  content.push(para(t(contexto || "(não informado)")));
+  // ── CABEÇALHO ────────────────────────────────────────────────────────────
+  content.push(heading(3, "CABEÇALHO"));
+  content.push(para(bold("Área: "),        t(areaLabel)));
+  content.push(para(bold("Solicitante: "), t(`${solicitanteNome} <${solicitanteEmail}>`)));
+  content.push(para(bold("Prazo: "),       t(prazo)));
   content.push(rule());
 
-  // Objetivo
-  content.push(heading(2, "Objetivo"));
-  content.push(para(t(objetivo || "(não informado)")));
+  // ── BRIEFING ─────────────────────────────────────────────────────────────
+  content.push(heading(3, "BRIEFING"));
+  content.push(para(t(contextoObjetivo || "(não informado)")));
   content.push(rule());
 
-  // Criativos
-  content.push(heading(2, `Criativos (${criativos.length})`));
+  // ── MENSAGEM ─────────────────────────────────────────────────────────────
+  if (mensagem) {
+    content.push(heading(3, "MENSAGEM"));
+    content.push(para(t(mensagem)));
+    content.push(rule());
+  }
 
-  for (let i = 0; i < criativos.length; i++) {
-    const c = criativos[i];
-    content.push(heading(3, `Criativo ${i + 1} — ${c.tipo || "Sem tipo"}`));
+  // ── CRIATIVOS ────────────────────────────────────────────────────────────
+  content.push(heading(3, "CRIATIVOS"));
 
-    if (isPPTTipo(c.tipo)) {
-      if (c.docLink) {
-        content.push(para(bold("Link para documento: "), t(c.docLink)));
-      } else {
-        content.push(para(t("Sem link de documento informado.")));
-      }
-    } else {
+  // Summary counts
+  const staticPieces = criativos.filter(c => c.tipo && !isVideoTipo(c.tipo) && !isPPTTipo(c.tipo));
+  const videoPieces  = criativos.filter(c => isVideoTipo(c.tipo));
+  const pptPieces    = criativos.filter(c => isPPTTipo(c.tipo));
+  const uniqueTipos  = [...new Set(criativos.map(c => c.tipo).filter(Boolean))];
+
+  content.push(para(bold("Tipos: "),     t(uniqueTipos.join(", ") || "—")));
+  if (staticPieces.length) content.push(para(bold("Estáticos: "), t(String(staticPieces.length))));
+  if (videoPieces.length)  content.push(para(bold("Vídeos: "),    t(String(videoPieces.length))));
+  if (pptPieces.length)    content.push(para(bold("Apresentações: "), t(String(pptPieces.length))));
+
+  // Aggregate dimensões and duração
+  const allDimensoes = criativos.map(c => c.dimensoes).filter(Boolean);
+  const allDuracoes  = criativos.map(c => c.duracao).filter(Boolean);
+  const allDocLinks  = criativos.filter(c => c.docLink).map(c => c.docLink!);
+  if (allDimensoes.length) content.push(para(bold("Dimensões: "), t(allDimensoes.join(", "))));
+  if (allDuracoes.length)  content.push(para(bold("Duração: "),   t(allDuracoes.join(", "))));
+  if (allDocLinks.length)  content.push(para(bold("Link para documento: "), t(allDocLinks.join(", "))));
+
+  // Per-criativo detail (only if they have meaningful content)
+  const richCriativos = criativos.filter(c =>
+    c.tipo && (c.direcao || (c.formatos && c.formatos.length > 0) || c.tipoOutrosDesc)
+  );
+  if (richCriativos.length > 0) {
+    content.push(rule());
+    for (let i = 0; i < criativos.length; i++) {
+      const c = criativos[i];
+      if (!c.tipo) continue;
+      const hasDetail = c.direcao || (c.formatos && c.formatos.length > 0) || c.tipoOutrosDesc || c.duracao;
+      if (!hasDetail && !isPPTTipo(c.tipo)) continue;
+
+      content.push(heading(4 as unknown as number, `Criativo ${i + 1} — ${c.tipo}`));
       if (c.formatos && c.formatos.length > 0) {
         const fmtParts = c.formatos.map(f => f === "Outros" && c.formatoOutros ? `Outros (${c.formatoOutros})` : f);
         content.push(para(bold("Formatos: "), t(fmtParts.join(", "))));
       }
-      if (c.tipo === "Banner físico" && c.dimensoes) {
-        content.push(para(bold("Dimensões: "), t(c.dimensoes)));
-      }
-      if (c.tipo === "Outros" && c.tipoOutrosDesc) {
-        content.push(para(bold("Formato: "), t(c.tipoOutrosDesc)));
-      }
-      if (isVideoTipo(c.tipo) && c.duracao) {
-        content.push(para(bold("Duração: "), t(c.duracao)));
-      }
-      if (c.direcao) {
-        content.push(para(bold("Direção criativa:")));
-        content.push(para(t(c.direcao)));
-      } else {
-        content.push(para(t("Sem direção criativa informada.")));
-      }
+      if (c.duracao)       content.push(para(bold("Duração: "),   t(c.duracao)));
+      if (c.tipoOutrosDesc) content.push(para(bold("Formato: "),  t(c.tipoOutrosDesc)));
+      if (c.docLink)       content.push(para(bold("Documento: "), t(c.docLink)));
+      if (c.direcao)       content.push(para(bold("Direcionamento: "), t(c.direcao)));
     }
-
-    if (i < criativos.length - 1) content.push(rule());
   }
-
-  content.push(rule());
-
-  // Info block
-  content.push(heading(2, "Informações"));
-  content.push(para(bold("Solicitante: "), t(`${solicitanteNome} <${solicitanteEmail}>`)));
-  content.push(para(bold("Área: "), t(areaLabel)));
-  content.push(para(bold("Prazo: "), t(prazo)));
 
   return { type: "doc", version: 1, content };
 }
@@ -301,8 +310,8 @@ async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; q
   ).join("\n");
 
   const user = `
-Contexto: ${body.contexto}
-Objetivo: ${body.objetivo}
+Contexto e objetivo: ${body.contextoObjetivo}
+Mensagem: ${body.mensagem || ""}
 Criativos:
 ${criativosSummary}
   `.trim();
@@ -333,7 +342,7 @@ interface ViabilityResult {
  *                   body.contexto + body.objetivo (fallback when direcao empty)
  */
 function estimateVideoHours(body: NovaDemandaBody): { edu: number; lar: number } {
-  const fallbackText = `${body.contexto ?? ""} ${body.objetivo ?? ""}`.toLowerCase();
+  const fallbackText = `${body.contextoObjetivo ?? ""} ${body.mensagem ?? ""}`.toLowerCase();
   let edu = 0, lar = 0;
 
   const RE_SIMPLES = /legenda|legendar|cortar|corte\b|resize|redimensionar|adaptar formato|ajustar formato/;
@@ -454,25 +463,26 @@ export async function POST(req: Request) {
 
     // ── Log for debugging ──────────────────────────────────────────────────
     console.log("[nova-demanda] body recebido:", JSON.stringify({
-      mode:        body.mode,
-      nomeTask:    body.nomeTask,
-      area:        body.area,
-      contexto:    body.contexto?.slice(0, 80),
-      objetivo:    body.objetivo?.slice(0, 80),
-      criativos:   body.criativos?.length,
-      prazo:       body.prazo,
-      solicitante: body.solicitanteNome,
+      mode:             body.mode,
+      nomeTask:         body.nomeTask,
+      area:             body.area,
+      contextoObjetivo: body.contextoObjetivo?.slice(0, 80),
+      mensagem:         body.mensagem?.slice(0, 60),
+      criativos:        body.criativos?.length,
+      prazo:            body.prazo,
+      solicitante:      body.solicitanteNome,
     }, null, 2));
 
     // ── Fallback: suporte a campos do formulário antigo (cache de navegador) ─
     const legacyBody = body as unknown as Record<string, string>;
-    if (!body.contexto && legacyBody["sobreOQue"]) {
-      body.contexto = legacyBody["sobreOQue"];
+    if (!body.contextoObjetivo) {
+      const parts = [legacyBody["contexto"], legacyBody["sobreOQue"],
+                     legacyBody["objetivo"], legacyBody["pedidoResumido"]]
+        .filter(Boolean);
+      if (parts.length) body.contextoObjetivo = parts.join("\n\n");
     }
-    if (!body.objetivo) {
-      const fallback = [legacyBody["pedidoResumido"], legacyBody["mensagem"]]
-        .filter(Boolean).join("\n\n");
-      if (fallback) body.objetivo = fallback;
+    if (!body.mensagem && legacyBody["mensagem"]) {
+      body.mensagem = legacyBody["mensagem"];
     }
     if (!body.criativos?.length && legacyBody["tipos"]) {
       const tiposStr = legacyBody["tipos"];
@@ -480,12 +490,12 @@ export async function POST(req: Request) {
       try { tipos = JSON.parse(tiposStr); } catch { tipos = [tiposStr]; }
       body.criativos = tipos.map(t => ({
         tipo: t, formatos: [], formatoOutros: "", dimensoes: "",
-        tipoOutrosDesc: "", duracao: "", direcao: legacyBody["mensagem"] ?? "", docLink: "",
+        tipoOutrosDesc: "", duracao: "", direcao: body.mensagem ?? "", docLink: "",
       }));
     }
     // ──────────────────────────────────────────────────────────────────────
 
-    const { mode, nomeTask, area, areaOutros, contexto, objetivo, criativos, prazo, solicitanteNome, solicitanteEmail } = body;
+    const { mode, nomeTask, area, areaOutros, contextoObjetivo, mensagem, criativos, prazo, solicitanteNome, solicitanteEmail } = body;
 
     const base    = JIRA_BASE();
     const auth    = JIRA_AUTH();
@@ -523,7 +533,7 @@ export async function POST(req: Request) {
 
     // Derive scheduler-compatible tipos from criativos
     const derivedTipos = deriveTipos(criativos);
-    const descBlob     = `${contexto}. ${objetivo}`;
+    const descBlob     = `${contextoObjetivo}. ${mensagem ?? ""}`;
 
     const pipeline = forceUnassigned ? null : await fetchPipeline(base, auth, project).catch(() => null);
     const plans    = pipeline

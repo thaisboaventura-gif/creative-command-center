@@ -51,8 +51,8 @@ interface DemandaForm {
   nomeTask: string;
   area: string;
   areaOutros: string;
-  contexto: string;
-  objetivo: string;
+  contextoObjetivo: string;
+  mensagem: string;
   criativos: CriativoCard[];
   prazo: string;
   solicitanteNome: string;
@@ -98,7 +98,7 @@ function emptyCriativo(): CriativoCard {
 function emptyForm(): DemandaForm {
   return {
     nomeTask: "", area: "", areaOutros: "",
-    contexto: "", objetivo: "",
+    contextoObjetivo: "", mensagem: "",
     criativos: [emptyCriativo()],
     prazo: "", solicitanteNome: "", solicitanteEmail: "",
   };
@@ -227,11 +227,10 @@ export default function NovaDemanda() {
   function validateForm(): boolean {
     const errs: Record<string, string> = {};
 
-    if (!form.nomeTask.trim())        errs["nomeTask"]        = "Campo obrigatório";
-    if (!form.area)                   errs["area"]            = "Selecione uma área";
+    if (!form.nomeTask.trim())              errs["nomeTask"]          = "Campo obrigatório";
+    if (!form.area)                         errs["area"]              = "Selecione uma área";
     if (form.area === "Outros" && !form.areaOutros.trim()) errs["areaOutros"] = "Campo obrigatório";
-    if (!form.contexto.trim())        errs["contexto"]        = "Campo obrigatório";
-    if (!form.objetivo.trim())        errs["objetivo"]        = "Campo obrigatório";
+    if (!form.contextoObjetivo.trim())      errs["contextoObjetivo"]  = "Campo obrigatório";
     if (!form.prazo)                  errs["prazo"]           = "Campo obrigatório";
     if (!form.solicitanteNome.trim()) errs["solicitanteNome"] = "Campo obrigatório";
     if (!form.solicitanteEmail.trim()) {
@@ -331,10 +330,10 @@ export default function NovaDemanda() {
 
   function buildPayload(mode: string, extraNote?: string) {
     const prazoToUse = mode === "create" && newPrazo ? newPrazo : form.prazo;
-    const enrichedObjetivo = extraNote
-      ? `${form.objetivo}\n\n[Complemento]: ${extraNote}`
-      : form.objetivo;
-    return { ...form, prazo: prazoToUse, objetivo: enrichedObjetivo, mode };
+    const enrichedContexto = extraNote
+      ? `${form.contextoObjetivo}\n\n[Complemento]: ${extraNote}`
+      : form.contextoObjetivo;
+    return { ...form, prazo: prazoToUse, contextoObjetivo: enrichedContexto, mode };
   }
 
   /* ─── canSubmit ─── */
@@ -342,7 +341,7 @@ export default function NovaDemanda() {
   const criativosFilled = form.criativos.length > 0 && form.criativos.every(c => c.tipo !== "");
   const canSubmit = !!(
     form.nomeTask.trim() && areaFilled &&
-    form.contexto.trim() && form.objetivo.trim() && criativosFilled &&
+    form.contextoObjetivo.trim() && criativosFilled &&
     form.prazo && form.solicitanteNome.trim() && form.solicitanteEmail.trim()
   );
 
@@ -514,42 +513,40 @@ export default function NovaDemanda() {
             {errors["areaOutros"] && <FieldError msg={errors["areaOutros"]} />}
           </div>
 
-          {/* 3 — Contexto */}
-          <div id="field-contexto">
+          {/* 3 — Contexto e objetivo */}
+          <div id="field-contextoObjetivo">
             <label style={lbl}>
-              Contexto *
-              <FieldCounter n={form.contexto.length} max={500} />
-              <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que motivou esse pedido?</span>
+              Contexto e objetivo *
+              <FieldCounter n={form.contextoObjetivo.length} max={1000} />
             </label>
             <textarea
-              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 40, ...(errors["contexto"] ? errBorder : {}) }}
-              maxLength={500} disabled={busy}
-              value={form.contexto}
-              onChange={e => { setField("contexto", e.target.value); autoResize(e.target); }}
-              onPaste={e => handlePaste(e, 500, form.contexto.length)}
-              placeholder="Ex: Lançamento de nova funcionalidade de pagamentos para lojistas SMB"
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 72, ...(errors["contextoObjetivo"] ? errBorder : {}) }}
+              maxLength={1000} disabled={busy}
+              value={form.contextoObjetivo}
+              onChange={e => { setField("contextoObjetivo", e.target.value); autoResize(e.target); }}
+              onPaste={e => handlePaste(e, 1000, form.contextoObjetivo.length)}
+              placeholder="Ex: Ale falando sobre Mentoria Next — precisamos legendar o vídeo e adaptar para feed e stories"
             />
-            {errors["contexto"] && <FieldError msg={errors["contexto"]} />}
-            {form.contexto.length >= 500 && <OverflowBanner />}
+            {errors["contextoObjetivo"] && <FieldError msg={errors["contextoObjetivo"]} />}
+            {form.contextoObjetivo.length >= 1000 && <OverflowBanner />}
           </div>
 
-          {/* 4 — Objetivo */}
-          <div id="field-objetivo">
+          {/* 4 — Mensagem */}
+          <div id="field-mensagem">
             <label style={lbl}>
-              Objetivo *
-              <FieldCounter n={form.objetivo.length} max={700} />
-              <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que essa campanha precisa gerar?</span>
+              Qual mensagem quer passar?
+              <FieldCounter n={form.mensagem.length} max={500} />
+              <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>(opcional)</span>
             </label>
             <textarea
-              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 80, ...(errors["objetivo"] ? errBorder : {}) }}
-              maxLength={700} disabled={busy}
-              value={form.objetivo}
-              onChange={e => { setField("objetivo", e.target.value); autoResize(e.target); }}
-              onPaste={e => handlePaste(e, 700, form.objetivo.length)}
-              placeholder="Ex: Gerar conversões de trial para plano pago entre lojistas que visitaram a LP de planos nos últimos 30 dias. Público-alvo: lojistas SMB Brasil, segmento moda."
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 48 }}
+              maxLength={500} disabled={busy}
+              value={form.mensagem}
+              onChange={e => { setField("mensagem", e.target.value); autoResize(e.target); }}
+              onPaste={e => handlePaste(e, 500, form.mensagem.length)}
+              placeholder="Ex: Migre da Elo7 para a Nuvemshop antes do encerramento"
             />
-            {errors["objetivo"] && <FieldError msg={errors["objetivo"]} />}
-            {form.objetivo.length >= 700 && <OverflowBanner />}
+            {form.mensagem.length >= 500 && <OverflowBanner />}
           </div>
 
           {/* 5 — Criativos */}
