@@ -266,28 +266,27 @@ async function callClaude(system: string, user: string): Promise<string> {
   return data.content?.[0]?.text ?? "";
 }
 
-const VALIDATION_SYSTEM = `Você valida briefings criativos. Seja PERMISSIVO — o time resolve detalhes de execução.
+const VALIDATION_SYSTEM = `Você valida briefings criativos para um time de design.
 
-BLOQUEAR (needs_clarification) APENAS SE:
-1. Nenhum criativo tem tipo selecionado — não dá pra saber o que produzir.
-2. Criativo do tipo Vídeo ou Motion sem nenhuma informação de duração e sem direção criativa.
-3. Contexto E objetivo completamente vazios ou ininteligíveis.
+REGRA ÚNICA: retorne { "ok": false } SOMENTE se os campos contexto E objetivo estiverem AMBOS completamente vazios (string vazia ou ausente).
 
-NUNCA BLOQUEAR POR:
-- Público-alvo não detalhado
-- Tom de comunicação não especificado
-- Formatos não selecionados (são opcionais)
-- Detalhes de execução (cores, fontes, estilo visual, referências)
-- Contextos internos conhecidos: D2C, Summit, SMB, ADS, PMM, Elo7, Nuvemshop, lojistas
+Em qualquer outro caso — mesmo que o briefing seja vago, curto, operacional, sem detalhes, sem público, sem tom — retorne { "ok": true }.
 
-SE TIVER DÚVIDA → retorne { "ok": true }
+NUNCA questionar:
+- Objetivo da campanha (já existe campo próprio)
+- Público-alvo
+- Tom de comunicação
+- Referências visuais
+- Número de peças
+- Formatos, dimensões, duração
+- Tasks operacionais: legenda, edição, adaptação, desdobramento, revisão, banner, header
 
-Responda APENAS com JSON:
+SE TIVER QUALQUER DÚVIDA → { "ok": true }
+
+Responda APENAS com JSON válido, sem texto fora do JSON:
 { "ok": true }
-ou
-{ "ok": false, "questions": ["pergunta objetiva e direta"] }
-
-Máximo 1 pergunta. Sem texto fora do JSON.`;
+ou (apenas se AMBOS contexto e objetivo vazios):
+{ "ok": false, "questions": ["Descreva brevemente o contexto e o objetivo desta demanda."] }`;
 
 async function validateBriefing(body: NovaDemandaBody): Promise<{ ok: boolean; questions?: string[] }> {
   const criativosSummary = body.criativos.map((c, i) =>
@@ -416,6 +415,39 @@ export async function POST(req: Request) {
     if (!Array.isArray(body.criativos)) {
       try { body.criativos = JSON.parse(body.criativos as unknown as string); } catch { body.criativos = []; }
     }
+
+    // ── Log for debugging ──────────────────────────────────────────────────
+    console.log("[nova-demanda] body recebido:", JSON.stringify({
+      mode:        body.mode,
+      nomeTask:    body.nomeTask,
+      area:        body.area,
+      contexto:    body.contexto?.slice(0, 80),
+      objetivo:    body.objetivo?.slice(0, 80),
+      criativos:   body.criativos?.length,
+      prazo:       body.prazo,
+      solicitante: body.solicitanteNome,
+    }, null, 2));
+
+    // ── Fallback: suporte a campos do formulário antigo (cache de navegador) ─
+    const legacyBody = body as unknown as Record<string, string>;
+    if (!body.contexto && legacyBody["sobreOQue"]) {
+      body.contexto = legacyBody["sobreOQue"];
+    }
+    if (!body.objetivo) {
+      const fallback = [legacyBody["pedidoResumido"], legacyBody["mensagem"]]
+        .filter(Boolean).join("\n\n");
+      if (fallback) body.objetivo = fallback;
+    }
+    if (!body.criativos?.length && legacyBody["tipos"]) {
+      const tiposStr = legacyBody["tipos"];
+      let tipos: string[] = [];
+      try { tipos = JSON.parse(tiposStr); } catch { tipos = [tiposStr]; }
+      body.criativos = tipos.map(t => ({
+        tipo: t, formatos: [], formatoOutros: "", dimensoes: "",
+        tipoOutrosDesc: "", duracao: "", direcao: legacyBody["mensagem"] ?? "", docLink: "",
+      }));
+    }
+    // ──────────────────────────────────────────────────────────────────────
 
     const { mode, nomeTask, area, areaOutros, contexto, objetivo, criativos, prazo, solicitanteNome, solicitanteEmail } = body;
 

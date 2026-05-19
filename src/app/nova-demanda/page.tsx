@@ -134,6 +134,14 @@ function OverflowBanner() {
   );
 }
 
+function FieldError({ msg }: { msg: string }) {
+  return (
+    <p style={{ margin: "4px 0 0", fontSize: 11, color: "#dc2626", fontWeight: 500 }}>
+      {msg}
+    </p>
+  );
+}
+
 /* ─── Main ─── */
 
 export default function NovaDemanda() {
@@ -158,12 +166,20 @@ export default function NovaDemanda() {
   // Paste warning
   const [pasteBanner, setPasteBanner] = useState(false);
 
+  // Validation errors
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   const busy = pageState === "validating" || pageState === "creating";
 
   /* ─── Form updaters ─── */
 
+  function clearError(key: string) {
+    setErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
+  }
+
   function setField<K extends keyof DemandaForm>(k: K, v: DemandaForm[K]) {
     setForm(p => ({ ...p, [k]: v }));
+    clearError(k as string);
   }
 
   function setCriativo<K extends keyof CriativoCard>(i: number, k: K, v: CriativoCard[K]) {
@@ -172,6 +188,7 @@ export default function NovaDemanda() {
       criativos[i] = { ...criativos[i], [k]: v };
       return { ...p, criativos };
     });
+    if (k === "tipo") clearError(`criativo_${i}_tipo`);
   }
 
   function toggleFormato(i: number, fmt: string) {
@@ -203,8 +220,41 @@ export default function NovaDemanda() {
     if (currentLen + text.length > maxLen) setPasteBanner(true);
   }
 
+  /* ─── Client-side validation ─── */
+  function validateForm(): boolean {
+    const errs: Record<string, string> = {};
+
+    if (!form.nomeTask.trim())        errs["nomeTask"]        = "Campo obrigatório";
+    if (!form.area)                   errs["area"]            = "Selecione uma área";
+    if (form.area === "Outros" && !form.areaOutros.trim()) errs["areaOutros"] = "Campo obrigatório";
+    if (!form.contexto.trim())        errs["contexto"]        = "Campo obrigatório";
+    if (!form.objetivo.trim())        errs["objetivo"]        = "Campo obrigatório";
+    if (!form.prazo)                  errs["prazo"]           = "Campo obrigatório";
+    if (!form.solicitanteNome.trim()) errs["solicitanteNome"] = "Campo obrigatório";
+    if (!form.solicitanteEmail.trim()) {
+      errs["solicitanteEmail"] = "Campo obrigatório";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.solicitanteEmail)) {
+      errs["solicitanteEmail"] = "Email inválido";
+    }
+    form.criativos.forEach((c, i) => {
+      if (!c.tipo) errs[`criativo_${i}_tipo`] = "Selecione um tipo";
+    });
+
+    setErrors(errs);
+
+    if (Object.keys(errs).length > 0) {
+      // Scroll to first error
+      const firstKey = Object.keys(errs)[0];
+      const el = document.getElementById(`field-${firstKey}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return false;
+    }
+    return true;
+  }
+
   /* ─── Validate ─── */
   async function doValidate(extraNote?: string): Promise<void> {
+    if (!extraNote && !validateForm()) return;   // block if client-side errors
     setPageState("validating");
     try {
       const body = buildPayload("validate", extraNote);
@@ -409,21 +459,23 @@ export default function NovaDemanda() {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
           {/* 1 — Nome da task */}
-          <div>
+          <div id="field-nomeTask">
             <label style={lbl}>
               Nome da task *
               <FieldCounter n={form.nomeTask.length} max={40} />
             </label>
             <input
-              style={inp} type="text" maxLength={40} disabled={busy}
+              style={{ ...inp, ...(errors["nomeTask"] ? errBorder : {}) }}
+              type="text" maxLength={40} disabled={busy}
               value={form.nomeTask} onChange={e => setField("nomeTask", e.target.value)}
               placeholder="Ex: SMB ADS — Campanha Maio"
             />
+            {errors["nomeTask"] && <FieldError msg={errors["nomeTask"]} />}
             {form.nomeTask.length >= 40 && <OverflowBanner />}
           </div>
 
           {/* 2 — Área */}
-          <div>
+          <div id="field-area">
             <label style={lbl}>Área relacionada *</label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
               {AREAS.map(a => {
@@ -433,7 +485,7 @@ export default function NovaDemanda() {
                     onClick={() => setField("area", a)}
                     style={{
                       padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: sel ? 700 : 400,
-                      border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                      border: sel ? "2px solid #7c3aed" : errors["area"] ? "1px solid #dc2626" : "1px solid #d1d5db",
                       background: sel ? "#ede9fe" : "white",
                       color: sel ? "#7c3aed" : "#6b7280",
                       cursor: busy ? "default" : "pointer", transition: "all .1s",
@@ -443,48 +495,54 @@ export default function NovaDemanda() {
                 );
               })}
             </div>
+            {errors["area"] && <FieldError msg={errors["area"]} />}
             {form.area === "Outros" && (
               <input
-                style={{ ...inp, marginTop: 8 }} type="text" disabled={busy}
+                id="field-areaOutros"
+                style={{ ...inp, marginTop: 8, ...(errors["areaOutros"] ? errBorder : {}) }}
+                type="text" disabled={busy}
                 value={form.areaOutros} onChange={e => setField("areaOutros", e.target.value)}
                 placeholder="Qual área?"
               />
             )}
+            {errors["areaOutros"] && <FieldError msg={errors["areaOutros"]} />}
           </div>
 
           {/* 3 — Contexto */}
-          <div>
+          <div id="field-contexto">
             <label style={lbl}>
               Contexto *
               <FieldCounter n={form.contexto.length} max={500} />
               <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que motivou esse pedido?</span>
             </label>
             <textarea
-              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 40 }}
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 40, ...(errors["contexto"] ? errBorder : {}) }}
               maxLength={500} disabled={busy}
               value={form.contexto}
               onChange={e => { setField("contexto", e.target.value); autoResize(e.target); }}
               onPaste={e => handlePaste(e, 500, form.contexto.length)}
               placeholder="Ex: Lançamento de nova funcionalidade de pagamentos para lojistas SMB"
             />
+            {errors["contexto"] && <FieldError msg={errors["contexto"]} />}
             {form.contexto.length >= 500 && <OverflowBanner />}
           </div>
 
           {/* 4 — Objetivo */}
-          <div>
+          <div id="field-objetivo">
             <label style={lbl}>
               Objetivo *
               <FieldCounter n={form.objetivo.length} max={700} />
               <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, marginLeft: 6 }}>O que essa campanha precisa gerar?</span>
             </label>
             <textarea
-              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 80 }}
+              style={{ ...inp, resize: "none", overflowY: "hidden", lineHeight: 1.5, minHeight: 80, ...(errors["objetivo"] ? errBorder : {}) }}
               maxLength={700} disabled={busy}
               value={form.objetivo}
               onChange={e => { setField("objetivo", e.target.value); autoResize(e.target); }}
               onPaste={e => handlePaste(e, 700, form.objetivo.length)}
               placeholder="Ex: Gerar conversões de trial para plano pago entre lojistas que visitaram a LP de planos nos últimos 30 dias. Público-alvo: lojistas SMB Brasil, segmento moda."
             />
+            {errors["objetivo"] && <FieldError msg={errors["objetivo"]} />}
             {form.objetivo.length >= 700 && <OverflowBanner />}
           </div>
 
@@ -532,17 +590,18 @@ export default function NovaDemanda() {
                 </p>
 
                 {/* Tipo */}
-                <div style={{ marginBottom: 12 }}>
+                <div id={`field-criativo_${i}_tipo`} style={{ marginBottom: 12 }}>
                   <label style={{ ...lbl, fontSize: 11 }}>Tipo *</label>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5 }}>
                     {TIPOS_CRIATIVO.map(t => {
                       const sel = c.tipo === t;
+                      const hasErr = !!errors[`criativo_${i}_tipo`];
                       return (
                         <button key={t} type="button" disabled={busy}
                           onClick={() => setCriativo(i, "tipo", sel ? "" : t)}
                           style={{
                             padding: "4px 11px", borderRadius: 20, fontSize: 11, fontWeight: sel ? 700 : 400,
-                            border: sel ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                            border: sel ? "2px solid #7c3aed" : hasErr ? "1px solid #dc2626" : "1px solid #d1d5db",
                             background: sel ? "#ede9fe" : "#fafafa",
                             color: sel ? "#7c3aed" : "#6b7280",
                             cursor: busy ? "default" : "pointer", transition: "all .1s",
@@ -552,6 +611,7 @@ export default function NovaDemanda() {
                       );
                     })}
                   </div>
+                  {errors[`criativo_${i}_tipo`] && <FieldError msg={errors[`criativo_${i}_tipo`]} />}
                 </div>
 
                 {/* PPT special handling */}
@@ -718,10 +778,10 @@ export default function NovaDemanda() {
           </div>
 
           {/* 7 — Prazo */}
-          <div>
+          <div id="field-prazo">
             <label style={lbl}>Prazo desejado *</label>
             <input
-              style={{ ...inp, cursor: "pointer" }}
+              style={{ ...inp, cursor: "pointer", ...(errors["prazo"] ? errBorder : {}) }}
               type="date" disabled={busy}
               value={form.prazo}
               onChange={e => setField("prazo", e.target.value)}
@@ -729,21 +789,28 @@ export default function NovaDemanda() {
                 try { (e.target as HTMLInputElement).showPicker(); } catch { /* sem suporte */ }
               }}
             />
+            {errors["prazo"] && <FieldError msg={errors["prazo"]} />}
           </div>
 
           {/* 8 — Solicitante */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
+            <div id="field-solicitanteNome">
               <label style={lbl}>Nome completo *</label>
-              <input style={inp} type="text" disabled={busy}
+              <input
+                style={{ ...inp, ...(errors["solicitanteNome"] ? errBorder : {}) }}
+                type="text" disabled={busy}
                 value={form.solicitanteNome} onChange={e => setField("solicitanteNome", e.target.value)}
                 placeholder="Seu nome" />
+              {errors["solicitanteNome"] && <FieldError msg={errors["solicitanteNome"]} />}
             </div>
-            <div>
+            <div id="field-solicitanteEmail">
               <label style={lbl}>Email *</label>
-              <input style={inp} type="email" disabled={busy}
+              <input
+                style={{ ...inp, ...(errors["solicitanteEmail"] ? errBorder : {}) }}
+                type="email" disabled={busy}
                 value={form.solicitanteEmail} onChange={e => setField("solicitanteEmail", e.target.value)}
                 placeholder="seu@email.com" />
+              {errors["solicitanteEmail"] && <FieldError msg={errors["solicitanteEmail"]} />}
             </div>
           </div>
 
@@ -815,9 +882,9 @@ export default function NovaDemanda() {
           {/* ─── Submit ─── */}
           {pageState !== "needs_clarification" && pageState !== "deadline_issue" && (
             <button
-              disabled={!canSubmit || busy}
+              disabled={busy}
               onClick={() => doValidate()}
-              style={{ ...btnPrimary, opacity: !canSubmit || busy ? .45 : 1, cursor: busy ? "wait" : "pointer" }}>
+              style={{ ...btnPrimary, opacity: busy ? .45 : 1, cursor: busy ? "wait" : "pointer" }}>
               {pageState === "validating" ? "Analisando briefing..." :
                pageState === "creating"   ? "Criando no Jira..." :
                "Criar demanda →"}
@@ -860,3 +927,5 @@ const btnGhost: React.CSSProperties = {
   border: "1px solid #d1d5db", background: "white", color: "#374151",
   fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "center", textDecoration: "none",
 };
+
+const errBorder: React.CSSProperties = { border: "1.5px solid #dc2626" };
