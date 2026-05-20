@@ -161,14 +161,29 @@ export async function GET() {
         : false
     );
 
-    // Build map: parentKey → set of team-member display names who have a subtask there
+    // Build map: parentKey → set of team-member display names who have a child task there.
+    // Two sources:
+    //   1. teamSubs (issuetype = subTaskIssueTypes — true Jira subtasks)
+    //   2. teamIssues that have a parent field (regular tasks that are children of a parent)
     const subParentMap = new Map<string, Set<string>>();
+
+    function addToParentMap(parentKey: string, name: string) {
+      if (!subParentMap.has(parentKey)) subParentMap.set(parentKey, new Set());
+      subParentMap.get(parentKey)!.add(name);
+    }
+
     for (const sub of teamSubs) {
       const parentKey = (sub.fields.parent as { key: string } | null)?.key;
       const name = sub.fields.assignee?.displayName;
-      if (!parentKey || !name) continue;
-      if (!subParentMap.has(parentKey)) subParentMap.set(parentKey, new Set());
-      subParentMap.get(parentKey)!.add(name);
+      if (parentKey && name) addToParentMap(parentKey, name);
+    }
+
+    // Also capture parent keys from team issues already in the board
+    // (these may be regular task-type children, not captured by subJql)
+    for (const issue of teamIssues) {
+      const parentKey = (issue.fields.parent as { key: string } | null)?.key;
+      const name = issue.fields.assignee?.displayName;
+      if (parentKey && name) addToParentMap(parentKey, name);
     }
 
     console.log("[jira] subParentMap keys:", [...subParentMap.keys()]);
