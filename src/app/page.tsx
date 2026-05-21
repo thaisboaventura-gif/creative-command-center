@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface TaskItem {
   id: string;
@@ -62,14 +62,14 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function getTwoWeekDays(offset: number): Date[] {
+function getOneWeekDays(offset: number): Date[] {
   const now = new Date();
   const mon = new Date(now);
-  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 14);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7);
   mon.setHours(0, 0, 0, 0);
-  return Array.from({ length: 10 }, (_, i) => {
+  return Array.from({ length: 5 }, (_, i) => {
     const d = new Date(mon);
-    d.setDate(mon.getDate() + i + (i >= 5 ? 2 : 0));
+    d.setDate(mon.getDate() + i);
     return d;
   });
 }
@@ -84,6 +84,22 @@ function parseLocalDate(s: string): Date {
   const dt = new Date(y, m - 1, d);
   dt.setHours(0, 0, 0, 0);
   return dt;
+}
+
+/** Format a Date as "YYYY-MM-DD" in local timezone. */
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Human-readable date in PT-BR for the confirmation modal. */
+function fmtDatePT(dateStr: string): string {
+  const d = parseLocalDate(dateStr);
+  const wd = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"][d.getDay()];
+  const mo = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][d.getMonth()];
+  return `${wd}, ${d.getDate()} ${mo}`;
 }
 
 /* ── Gantt bars layout ── */
@@ -138,7 +154,7 @@ function dayIndex(d: Date, days: Date[]): number {
   return -1;
 }
 
-function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
+function layoutBars(tasks: TaskItem[], days: Date[], startOverrides: Record<string, number> = {}): Bar[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const nowMs = now.getTime();
@@ -163,8 +179,15 @@ function layoutBars(tasks: TaskItem[], days: Date[]): Bar[] {
 
       // Find closest visible day index for start
       let startCol = -1;
-      const startsBefore = created.getTime() < firstDay.getTime();
-      if (startsBefore) {
+      let startsBefore = false;
+
+      // Check for user-overridden start column (from left-handle drag)
+      const overrideCol = startOverrides[task.id];
+      if (overrideCol !== undefined) {
+        startCol = overrideCol - 1; // stored as 1-based, convert to 0-based
+        startsBefore = false;
+      } else if (created.getTime() < firstDay.getTime()) {
+        startsBefore = true;
         startCol = 0;
       } else {
         // walk forward to find first visible day >= created
@@ -240,7 +263,24 @@ export default function Dashboard() {
   const [src, setSrc] = useState<"loading" | "ok" | "err">("loading");
   const [page, setPage] = useState(0);
 
-  useEffect(() => {
+  // ── Drag-resize state ──
+  const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
+  const [dragState, setDragState] = useState<{
+    key: string;
+    handle: "left" | "right";
+    startX: number;
+    initialCol: number;
+  } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ key: string; col: number } | null>(null);
+  const [pendingModal, setPendingModal] = useState<{
+    key: string;
+    title: string;
+    newDate: string;
+  } | null>(null);
+  const barZoneRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewRef = useRef<{ key: string; col: number } | null>(null);
+
+  function loadJira() {
     fetch("/api/jira")
       .then((r) => r.json())
       .then((d) => {
@@ -248,9 +288,107 @@ export default function Dashboard() {
         if (d.newDemands?.length) setIncoming(d.newDemands);
       })
       .catch(() => setSrc("err"));
+  }
+
+  useEffect(() => {
+    loadJira();
   }, []);
 
-  const days = getTwoWeekDays(page);
+  const days = getOneWeekDays(page);
+
+  // Load start overrides from localStorage
+  useEffect(() => {
+    const saved: Record<string, number> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (k.startsWith("gantt_start_")) {
+        const col = parseInt(localStorage.getItem(k)!);
+        if (!isNaN(col)) saved[k.replace("gantt_start_", "")] = col;
+      }
+    }
+    if (Object.keys(saved).length > 0) setStartOverrides(saved);
+  }, []);
+
+  // Global drag mouse events
+  useEffect(() => {
+    if (!dragState) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const containerWidth = barZoneRef.current?.offsetWidth ?? 500;
+      const colWidth = containerWidth / 5;
+      const deltaX = e.clientX - dragState.startX;
+      const deltaCols = Math.round(deltaX / colWidth);
+      let newCol = dragState.initialCol + deltaCols;
+      newCol = Math.max(1, Math.min(5, newCol));
+      const dp = { key: dragState.key, col: newCol };
+      dragPreviewRef.current = dp;
+      setDragPreview(dp);
+    };
+
+    const onMouseUp = () => {
+      const dp = dragPreviewRef.current;
+      if (dp) {
+        if (dragState.handle === "left") {
+          setStartOverrides((prev) => {
+            const next = { ...prev, [dragState.key]: dp.col };
+            localStorage.setItem(`gantt_start_${dragState.key}`, String(dp.col));
+            return next;
+          });
+        } else {
+          // Right handle: map column → date → open confirmation modal
+          const dayIdx = dp.col - 1;
+          const day = days[dayIdx];
+          if (day) {
+            const dateStr = formatLocalDate(day);
+            const allTasks = team.flatMap((m) => m.tasks);
+            const task = allTasks.find((t) => t.id === dragState.key);
+            setPendingModal({
+              key: dragState.key,
+              title: task?.title ?? dragState.key,
+              newDate: dateStr,
+            });
+          }
+        }
+      }
+      dragPreviewRef.current = null;
+      setDragState(null);
+      setDragPreview(null);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [dragState, days, team]);
+
+  // Prevent text selection while dragging
+  useEffect(() => {
+    if (dragState) {
+      document.body.style.userSelect = "none";
+    } else {
+      document.body.style.userSelect = "";
+    }
+  }, [dragState]);
+
+  async function confirmDeadline() {
+    if (!pendingModal) return;
+    const res = await fetch("/api/jira/update-deadline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ issueKey: pendingModal.key, newDate: pendingModal.newDate }),
+    });
+    if (res.ok) {
+      setPendingModal(null);
+      setSrc("loading");
+      loadJira();
+    } else {
+      const data = await res.json().catch(() => ({ error: "Erro desconhecido" }));
+      alert(`Erro ao atualizar prazo: ${data.error}`);
+    }
+  }
+
   const today = new Date();
   const now = Date.now();
 
@@ -266,7 +404,7 @@ export default function Dashboard() {
   const rows = sorted.map((m) => {
     const cfg = getConfig(m.name);
     const active = m.tasks.filter((t) => t.status !== "done");
-    const bars = layoutBars(active, days);
+    const bars = layoutBars(active, days, startOverrides);
     const lanes = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1;
     const backlog = active.filter((t) => !t.dueDate).length;
     return { member: m, cfg, bars, lanes, backlog };
@@ -277,6 +415,63 @@ export default function Dashboard() {
 
   return (
     <Shell>
+      {/* Deadline confirmation modal */}
+      {pendingModal && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: "white", borderRadius: 14, padding: "28px 32px",
+            maxWidth: 440, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 6 }}>
+              Alterar prazo
+            </div>
+            <div style={{
+              fontSize: 11, color: "#7c3aed", fontWeight: 700, marginBottom: 4,
+              background: "#ede9fe", display: "inline-block", padding: "2px 8px", borderRadius: 6,
+            }}>
+              {pendingModal.key}
+            </div>
+            <div style={{ fontSize: 13, color: "#374151", marginBottom: 16, marginTop: 6, lineHeight: 1.4 }}>
+              {pendingModal.title.slice(0, 80)}{pendingModal.title.length > 80 ? "…" : ""}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+              <span style={{ fontSize: 12, color: "#6b7280" }}>Novo prazo:</span>
+              <span style={{
+                fontSize: 13, fontWeight: 700, color: "#111",
+                background: "#f3f4f6", padding: "4px 12px", borderRadius: 8,
+              }}>
+                📅 {fmtDatePT(pendingModal.newDate)}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setPendingModal(null)}
+                style={{
+                  padding: "8px 18px", borderRadius: 8, border: "1px solid #e5e7eb",
+                  background: "white", fontSize: 13, cursor: "pointer", color: "#374151",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDeadline}
+                style={{
+                  padding: "8px 20px", borderRadius: 8, border: "none",
+                  background: "#7c3aed", color: "white", fontSize: 13,
+                  fontWeight: 700, cursor: "pointer",
+                }}
+              >
+                Confirmar →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
@@ -286,8 +481,8 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <a href="/performance" style={{ background: "#0ea5e9", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>📊 Performance</a>
           <a href="/nova-demanda" style={{ background: "#7c3aed", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>+ Nova demanda</a>
-          <Btn onClick={() => setPage((p) => p - 1)}>← 2 sem</Btn>
-          <Btn onClick={() => setPage((p) => p + 1)}>2 sem →</Btn>
+          <Btn onClick={() => setPage((p) => p - 1)}>← 1 sem</Btn>
+          <Btn onClick={() => setPage((p) => p + 1)}>1 sem →</Btn>
           {page !== 0 && <Btn onClick={() => setPage(0)}>Hoje</Btn>}
         </div>
       </div>
@@ -297,7 +492,7 @@ export default function Dashboard() {
         <div style={{ minWidth: 680 }}>
 
           {/* Header: day columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(10, 1fr)", borderBottom: "1px solid #eef0f3" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)", borderBottom: "1px solid #eef0f3" }}>
             <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>
               Time
             </div>
@@ -348,7 +543,7 @@ export default function Dashboard() {
                 key={member.name}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "180px repeat(10, 1fr)",
+                  gridTemplateColumns: "180px repeat(5, 1fr)",
                   borderBottom: "1px solid #f3f4f6",
                   minHeight: rowHeight,
                 }}
@@ -385,8 +580,11 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Bar zone — relative container spanning 10 columns */}
-                <div style={{ gridColumn: "2 / 12", position: "relative", padding: "10px 0" }}>
+                {/* Bar zone — relative container spanning 5 columns */}
+                <div
+                  ref={(el) => { if (!barZoneRef.current && el) barZoneRef.current = el; }}
+                  style={{ gridColumn: "2 / 7", position: "relative", padding: "10px 0" }}
+                >
                   {/* Vertical day separators */}
                   {days.map((d, i) => {
                     const isT = sameDay(d, today);
@@ -398,7 +596,7 @@ export default function Dashboard() {
                           position: "absolute",
                           top: 0,
                           bottom: 0,
-                          left: `${(i / 10) * 100}%`,
+                          left: `${(i / 5) * 100}%`,
                           width: 1,
                           background: isT ? "#5b6cff" : isMonday ? "#eef0f3" : "transparent",
                           opacity: isT ? 0.3 : 1,
@@ -416,8 +614,8 @@ export default function Dashboard() {
                           position: "absolute",
                           top: 0,
                           bottom: 0,
-                          left: `${(i / 10) * 100}%`,
-                          width: `${100 / 10}%`,
+                          left: `${(i / 5) * 100}%`,
+                          width: `${100 / 5}%`,
                           background: "#f5f3ff",
                           opacity: 0.5,
                           zIndex: 0,
@@ -428,10 +626,19 @@ export default function Dashboard() {
 
                   {/* Bars */}
                   {bars.map((bar) => {
-                    const startIdx = bar.startCol - 1;
-                    const endIdx = bar.endCol - 1;
-                    const leftPct = (startIdx / 10) * 100;
-                    const widthPct = ((endIdx - startIdx + 1) / 10) * 100;
+                    // Apply drag preview to this bar's columns
+                    const isBeingDragged = dragPreview?.key === bar.task.id;
+                    const displayStartCol = (isBeingDragged && dragState?.handle === "left")
+                      ? Math.min(dragPreview!.col, bar.endCol)
+                      : bar.startCol;
+                    const displayEndCol = (isBeingDragged && dragState?.handle === "right")
+                      ? Math.max(dragPreview!.col, bar.startCol)
+                      : bar.endCol;
+
+                    const startIdx = displayStartCol - 1;
+                    const endIdx   = displayEndCol - 1;
+                    const leftPct  = (startIdx / 5) * 100;
+                    const widthPct = ((endIdx - startIdx + 1) / 5) * 100;
                     const top = bar.lane * 32;
 
                     const isWaiting = bar.task.status === "in_review";
@@ -442,12 +649,13 @@ export default function Dashboard() {
                     const barBg = bar.isDone
                       ? "#9ca3af"
                       : isWaiting
-                      ? "#fca5a5"
+                      ? "#d1fae5"
                       : bar.overdue
                       ? "#ef4444"
                       : isDueToday
                       ? "#fbbf24"
                       : bar.color;
+                    const textColor = isWaiting && !bar.isDone && !bar.overdue ? "#065f46" : "white";
                     const barLabel = bar.isDone
                       ? `✅ ${bar.task.title}`
                       : isWaiting && bar.overdue
@@ -470,42 +678,110 @@ export default function Dashboard() {
                       : `${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`;
 
                     return (
-                      <a
+                      <div
                         key={bar.task.id}
-                        href={`${JIRA}/${bar.task.key}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={titleTip}
                         style={{
                           position: "absolute",
                           left: `calc(${leftPct}% + 4px)`,
                           width: `calc(${widthPct}% - 8px)`,
                           top: top + 8,
                           height: 26,
-                          background: barBg,
-                          color: isWaiting && !bar.isDone && !bar.overdue ? "#7f1d1d" : "white",
-                          borderRadius: 999,
-                          padding: "0 12px",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          fontSize: 11,
-                          fontWeight: bar.isDone ? 400 : 600,
-                          opacity: bar.isDone ? 0.7 : 1,
-                          textDecoration: "none",
-                          overflow: "hidden",
-                          whiteSpace: "nowrap",
-                          textOverflow: "ellipsis",
-                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                          borderLeft: bar.startsBefore ? "3px solid rgba(255,255,255,0.6)" : "none",
-                          zIndex: 1,
+                          zIndex: isBeingDragged ? 10 : 1,
                         }}
                       >
-                        {bar.startsBefore && <span style={{ opacity: 0.85, fontSize: 10 }}>←</span>}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {barLabel}
-                        </span>
-                      </a>
+                        {/* Left resize handle */}
+                        <div
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDragState({ key: bar.task.id, handle: "left", startX: e.clientX, initialCol: bar.startCol });
+                          }}
+                          title="Arrastar para mudar início"
+                          style={{
+                            position: "absolute",
+                            left: 0, top: 0, bottom: 0,
+                            width: 14,
+                            cursor: "ew-resize",
+                            zIndex: 3,
+                            borderRadius: "999px 0 0 999px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <div style={{
+                            width: 2, height: 10,
+                            background: "rgba(255,255,255,0.55)",
+                            borderRadius: 2,
+                          }} />
+                        </div>
+
+                        {/* Main bar link */}
+                        <a
+                          href={`${JIRA}/${bar.task.key}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={titleTip}
+                          onClick={(e) => { if (dragState) e.preventDefault(); }}
+                          style={{
+                            position: "absolute",
+                            left: 0, right: 0, top: 0, bottom: 0,
+                            background: barBg,
+                            color: textColor,
+                            borderRadius: 999,
+                            padding: "0 22px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 11,
+                            fontWeight: bar.isDone ? 400 : 600,
+                            opacity: bar.isDone ? 0.7 : 1,
+                            textDecoration: "none",
+                            overflow: "hidden",
+                            whiteSpace: "nowrap",
+                            boxShadow: isBeingDragged
+                              ? "0 4px 16px rgba(0,0,0,0.18)"
+                              : "0 1px 2px rgba(0,0,0,0.06)",
+                            borderLeft: bar.startsBefore ? "3px solid rgba(255,255,255,0.6)" : "none",
+                            transition: isBeingDragged ? "none" : "box-shadow 0.15s",
+                            outline: isBeingDragged ? `2px solid ${barBg}` : "none",
+                            outlineOffset: 2,
+                            userSelect: "none",
+                          }}
+                        >
+                          {bar.startsBefore && <span style={{ opacity: 0.85, fontSize: 10 }}>←</span>}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
+                            {barLabel}
+                          </span>
+                        </a>
+
+                        {/* Right resize handle */}
+                        <div
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDragState({ key: bar.task.id, handle: "right", startX: e.clientX, initialCol: bar.endCol });
+                          }}
+                          title="Arrastar para mudar prazo"
+                          style={{
+                            position: "absolute",
+                            right: 0, top: 0, bottom: 0,
+                            width: 14,
+                            cursor: "ew-resize",
+                            zIndex: 3,
+                            borderRadius: "0 999px 999px 0",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <div style={{
+                            width: 2, height: 10,
+                            background: "rgba(255,255,255,0.55)",
+                            borderRadius: 2,
+                          }} />
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -525,12 +801,16 @@ export default function Dashboard() {
           uma cor por projeto
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 24, height: 8, borderRadius: 999, background: "#d1fae5", border: "1px solid #a7f3d0" }} />
+          ⏳ aguardando feedback
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 24, height: 8, borderRadius: 999, background: "#fbbf24" }} />
-          entrega hoje
+          📅 entrega hoje
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 24, height: 8, borderRadius: 999, background: "#ef4444" }} />
-          atrasada
+          ⚠️ atrasada
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 24, height: 8, borderRadius: 999, background: "#5b6cff", borderLeft: "3px solid rgba(255,255,255,0.6)" }} />
