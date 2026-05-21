@@ -154,7 +154,12 @@ function dayIndex(d: Date, days: Date[]): number {
   return -1;
 }
 
-function layoutBars(tasks: TaskItem[], days: Date[], startOverrides: Record<string, number> = {}): Bar[] {
+function layoutBars(
+  tasks: TaskItem[],
+  days: Date[],
+  startOverrides: Record<string, number> = {},
+  laneOverrides: Record<string, number> = {},
+): Bar[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const nowMs = now.getTime();
@@ -225,9 +230,21 @@ function layoutBars(tasks: TaskItem[], days: Date[], startOverrides: Record<stri
     .filter((x): x is Bar => x !== null)
     .sort((a, b) => a.endCol - b.endCol || a.startCol - b.startCol);
 
-  // Lane allocation: greedy first-fit
-  const lanes: number[] = []; // for each lane: last occupied endCol
+  // Lane allocation: two-pass — locked lanes first, then greedy first-fit
+  const lanes: number[] = []; // last occupied endCol per lane
+
+  // Pass 1: place bars with a locked lane (dragged bars keep their row)
   for (const bar of candidates) {
+    const locked = laneOverrides[bar.task.id];
+    if (locked === undefined) continue;
+    bar.lane = locked;
+    while (lanes.length <= locked) lanes.push(0);
+    lanes[locked] = Math.max(lanes[locked], bar.endCol);
+  }
+
+  // Pass 2: greedy first-fit for the rest
+  for (const bar of candidates) {
+    if (laneOverrides[bar.task.id] !== undefined) continue;
     let placed = false;
     for (let l = 0; l < lanes.length; l++) {
       if (bar.startCol > lanes[l]) {
@@ -265,6 +282,7 @@ export default function Dashboard() {
 
   // ── Drag-resize state ──
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
+  const [laneOverrides, setLaneOverrides] = useState<Record<string, number>>({});
   const [dragState, setDragState] = useState<{
     key: string;
     handle: "left" | "right";
@@ -276,9 +294,15 @@ export default function Dashboard() {
     key: string;
     title: string;
     newDate: string;
+    prevDate: string | null;
   } | null>(null);
   const barZoneRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<{ key: string; col: number } | null>(null);
+
+  type UndoAction =
+    | { type: "start"; key: string; prevCol: number | undefined }
+    | { type: "deadline"; key: string; prevDate: string | null };
+  const undoStackRef = useRef<UndoAction[]>([]);
 
   function loadJira() {
     fetch("/api/jira")
@@ -329,7 +353,12 @@ export default function Dashboard() {
       const dp = dragPreviewRef.current;
       if (dp) {
         if (dragState.handle === "left") {
+          // Push undo before applying change
           setStartOverrides((prev) => {
+            undoStackRef.current = [
+              ...undoStackRef.current,
+              { type: "start", key: dragState.key, prevCol: prev[dragState.key] },
+            ];
             const next = { ...prev, [dragState.key]: dp.col };
             localStorage.setItem(`gantt_start_${dragState.key}`, String(dp.col));
             return next;
@@ -346,6 +375,7 @@ export default function Dashboard() {
               key: dragState.key,
               title: task?.title ?? dragState.key,
               newDate: dateStr,
+              prevDate: task?.dueDate ?? null,
             });
           }
         }
@@ -374,6 +404,11 @@ export default function Dashboard() {
 
   async function confirmDeadline() {
     if (!pendingModal) return;
+    // Push undo before API call
+    undoStackRef.current = [
+      ...undoStackRef.current,
+      { type: "deadline", key: pendingModal.key, prevDate: pendingModal.prevDate },
+    ];
     const res = await fetch("/api/jira/update-deadline", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -384,10 +419,67 @@ export default function Dashboard() {
       setSrc("loading");
       loadJira();
     } else {
+      undoStackRef.current = undoStackRef.current.slice(0, -1); // rollback push on error
       const data = await res.json().catch(() => ({ error: "Erro desconhecido" }));
       alert(`Erro ao atualizar prazo: ${data.error}`);
     }
   }
+
+  // ── Cmd+Z / Ctrl+Z undo ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        const stack = undoStackRef.current;
+        if (stack.length === 0) return;
+        const last = stack[stack.length - 1];
+        undoStackRef.current = stack.slice(0, -1);
+
+        if (last.type === "start") {
+          // Restore previous startCol (or remove override entirely)
+          setStartOverrides((prev) => {
+            const next = { ...prev };
+            if (last.prevCol === undefined) {
+              delete next[last.key];
+              localStorage.removeItem(`gantt_start_${last.key}`);
+            } else {
+              next[last.key] = last.prevCol;
+              localStorage.setItem(`gantt_start_${last.key}`, String(last.prevCol));
+            }
+            return next;
+          });
+          // Remove lane lock so bar goes back to natural layout
+          setLaneOverrides((prev) => {
+            const next = { ...prev };
+            delete next[last.key];
+            return next;
+          });
+        } else if (last.type === "deadline") {
+          // Restore previous dueDate in Jira
+          if (last.prevDate) {
+            fetch("/api/jira/update-deadline", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ issueKey: last.key, newDate: last.prevDate }),
+            }).then((r) => {
+              if (r.ok) {
+                setSrc("loading");
+                fetch("/api/jira")
+                  .then((r2) => r2.json())
+                  .then((d) => {
+                    if (d.team?.length) { setTeam(d.team); setSrc("ok"); } else setSrc("err");
+                    if (d.newDemands?.length) setIncoming(d.newDemands);
+                  })
+                  .catch(() => setSrc("err"));
+              }
+            });
+          }
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []); // empty deps: uses refs + stable setState functions
 
   const today = new Date();
   const now = Date.now();
@@ -404,7 +496,7 @@ export default function Dashboard() {
   const rows = sorted.map((m) => {
     const cfg = getConfig(m.name);
     const active = m.tasks.filter((t) => t.status !== "done");
-    const bars = layoutBars(active, days, startOverrides);
+    const bars = layoutBars(active, days, startOverrides, laneOverrides);
     const lanes = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1;
     const backlog = active.filter((t) => !t.dueDate).length;
     return { member: m, cfg, bars, lanes, backlog };
@@ -694,6 +786,7 @@ export default function Dashboard() {
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            setLaneOverrides((prev) => ({ ...prev, [bar.task.id]: bar.lane }));
                             setDragState({ key: bar.task.id, handle: "left", startX: e.clientX, initialCol: bar.startCol });
                           }}
                           title="Arrastar para mudar início"
@@ -760,6 +853,7 @@ export default function Dashboard() {
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            setLaneOverrides((prev) => ({ ...prev, [bar.task.id]: bar.lane }));
                             setDragState({ key: bar.task.id, handle: "right", startX: e.clientX, initialCol: bar.endCol });
                           }}
                           title="Arrastar para mudar prazo"
