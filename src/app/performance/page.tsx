@@ -364,7 +364,8 @@ export default function PerformanceDashboard() {
   const tooltipTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const labelResizeRef    = useRef<{ startX: number; startW: number } | null>(null);
   const barDragOffsetRef  = useRef(0);
-  const ganttContainerRef = useRef<HTMLDivElement | null>(null);
+  const ganttContainerRef  = useRef<HTMLDivElement | null>(null);
+  const ganttHeaderScrollRef = useRef<HTMLDivElement | null>(null);
   const perfDropIdxRef    = useRef<number | null>(null);
   const perfOrderedRef    = useRef<string[]>([]);
   const perfRowRefsMap    = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1226,17 +1227,19 @@ export default function PerformanceDashboard() {
       </div>
 
       {/* ── Gantt ── */}
-      <div
-        ref={ganttContainerRef}
-        style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16 }}
-      >
-        <div style={{ width: "100%" }}>
+      <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16 }}>
 
+        {/* Sticky date header — own overflowX scroll, bar hidden by parent overflow:hidden */}
+        <div style={{ position: "sticky", top: 0, zIndex: 10, overflow: "hidden", background: "white", borderBottom: "1px solid #eef0f3" }}>
+          <div
+            ref={ganttHeaderScrollRef}
+            onScroll={(e) => { if (ganttContainerRef.current) ganttContainerRef.current.scrollLeft = e.currentTarget.scrollLeft; }}
+            style={{ overflowX: "auto", paddingBottom: 20, marginBottom: -20 }}
+          >
+            <div style={{ width: "100%" }}>
           {/* Column headers */}
           <div style={{
             display: "grid", gridTemplateColumns: GRID_COLS,
-            borderBottom: "1px solid #eef0f3",
-            position: "sticky", top: 0, background: "white", zIndex: 10,
           }}>
             <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", position: "relative" }}>
               Task
@@ -1290,6 +1293,17 @@ export default function PerformanceDashboard() {
               );
             })}
           </div>
+            </div>{/* end width:100% inner */}
+          </div>{/* end ganttHeaderScrollRef */}
+        </div>{/* end sticky header wrapper */}
+
+        {/* Scrollable body */}
+        <div
+          ref={ganttContainerRef}
+          onScroll={(e) => { if (ganttHeaderScrollRef.current) ganttHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft; }}
+          style={{ overflowX: "auto" }}
+        >
+          <div style={{ width: "100%" }}>
 
           {/* Task rows */}
           {orderedVisibleActive.length === 0 && (
@@ -1328,8 +1342,9 @@ export default function PerformanceDashboard() {
           {perfDropIdx === orderedVisibleActive.length && perfVertDrag && (
             <div style={{ height: 2, background: "#7c3aed", margin: 0 }} />
           )}
-        </div>
-      </div>
+          </div>{/* end width:100% body */}
+        </div>{/* end ganttContainerRef scroll div */}
+      </div>{/* end gantt card */}
 
       {/* ── Color legend ── */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>

@@ -271,8 +271,10 @@ export default function Dashboard() {
     newDate: string;
     prevDate: string | null;
   } | null>(null);
-  const barZoneRef = useRef<HTMLDivElement | null>(null);
+  const barZoneRef     = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<{ key: string; col: number } | null>(null);
+  const ganttHeaderRef = useRef<HTMLDivElement | null>(null);
+  const ganttBodyRef   = useRef<HTMLDivElement | null>(null);
 
   type UndoAction =
     | { type: "start"; key: string; prevCol: number | undefined }
@@ -625,11 +627,18 @@ export default function Dashboard() {
       </div>
 
       {/* Gantt */}
-      <div style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3" }}>
-        <div style={{ minWidth: 680 }}>
+      <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3" }}>
 
+        {/* Sticky date header — own overflow-x scroll, scrollbar hidden by outer overflow:hidden */}
+        <div style={{ position: "sticky", top: 0, zIndex: 10, overflow: "hidden", background: "white", borderBottom: "1px solid #eef0f3" }}>
+          <div
+            ref={ganttHeaderRef}
+            onScroll={(e) => { if (ganttBodyRef.current) ganttBodyRef.current.scrollLeft = e.currentTarget.scrollLeft; }}
+            style={{ overflowX: "auto", paddingBottom: 20, marginBottom: -20 }}
+          >
+            <div style={{ minWidth: 680 }}>
           {/* Header: day columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)", borderBottom: "1px solid #eef0f3", position: "sticky", top: 0, background: "white", zIndex: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)" }}>
             <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>
               Time
             </div>
@@ -669,6 +678,17 @@ export default function Dashboard() {
               );
             })}
           </div>
+            </div>{/* end minWidth */}
+          </div>{/* end ganttHeaderRef scroll div */}
+        </div>{/* end sticky header wrapper */}
+
+        {/* Scrollable body */}
+        <div
+          ref={ganttBodyRef}
+          onScroll={(e) => { if (ganttHeaderRef.current) ganttHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft; }}
+          style={{ overflowX: "auto" }}
+        >
+          <div style={{ minWidth: 680 }}>
 
           {/* Member rows */}
           {rows.map(({ member, cfg, bars, lanes, backlog }) => {
@@ -952,8 +972,9 @@ export default function Dashboard() {
               </div>
             );
           })}
-        </div>
-      </div>
+          </div>{/* end minWidth body */}
+        </div>{/* end ganttBodyRef scroll div */}
+      </div>{/* end gantt card */}
 
       {/* Incoming panel */}
       {incoming.length > 0 && <IncomingPanel items={incoming} />}
