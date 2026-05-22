@@ -232,6 +232,7 @@ const HIDDEN_KEY       = "perf_hidden_v1";
 const COLLAPSED_KEY    = "perf_collapsed_v1";
 const DONE_MONTHS_KEY  = "perf_done_months_v1";
 const MANUAL_KEY       = "perf_manual_tasks_v1";
+const PERF_ORDER_KEY   = "perf_task_order_v1";
 
 const PT_MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
                    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -355,10 +356,18 @@ export default function PerformanceDashboard() {
   const [isResizingLabel,   setIsResizingLabel]   = useState(false);
   const [barDragState,      setBarDragState]      = useState<BarDragState | null>(null);
   const [barDragOffset,     setBarDragOffset]     = useState(0);
-  const tooltipTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const labelResizeRef   = useRef<{ startX: number; startW: number } | null>(null);
-  const barDragOffsetRef = useRef(0);
+  // Vertical reorder state
+  const [perfOrder,     setPerfOrder]     = useState<string[]>([]);
+  interface PerfVertDrag { taskKey: string; fromIdx: number; }
+  const [perfVertDrag,  setPerfVertDrag]  = useState<PerfVertDrag | null>(null);
+  const [perfDropIdx,   setPerfDropIdx]   = useState<number | null>(null);
+  const tooltipTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const labelResizeRef    = useRef<{ startX: number; startW: number } | null>(null);
+  const barDragOffsetRef  = useRef(0);
   const ganttContainerRef = useRef<HTMLDivElement | null>(null);
+  const perfDropIdxRef    = useRef<number | null>(null);
+  const perfOrderedRef    = useRef<string[]>([]);
+  const perfRowRefsMap    = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Load persisted state from localStorage on mount
   useEffect(() => {
@@ -366,6 +375,8 @@ export default function PerformanceDashboard() {
     setCollapsed(loadSet(COLLAPSED_KEY));
     const savedW = parseInt(localStorage.getItem(LABEL_W_KEY) ?? "");
     if (!isNaN(savedW) && savedW >= 120) setLabelWidth(savedW);
+    const savedOrder = loadArray(PERF_ORDER_KEY);
+    if (savedOrder.length > 0) setPerfOrder(savedOrder);
   }, []);
 
   // Label column resize — global mouse events while dragging
@@ -496,6 +507,14 @@ export default function PerformanceDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneTasks, deliveredSearch]);
 
+  const orderedVisibleActive = useMemo(() => {
+    if (perfOrder.length === 0) return visibleActive;
+    const keySet = new Set(visibleActive.map((t) => t.key));
+    const ordered = perfOrder.filter((k) => keySet.has(k)).map((k) => visibleActive.find((t) => t.key === k)!);
+    const rest = visibleActive.filter((t) => !perfOrder.includes(t.key));
+    return [...ordered, ...rest];
+  }, [visibleActive, perfOrder]);
+
   /* ── Actions ── */
 
   function hideTask(key: string) {
@@ -622,6 +641,55 @@ export default function PerformanceDashboard() {
     };
   }, [barDragState, days, labelWidth]);
 
+  // Vertical reorder — global mouse events while dragging a task row
+  useEffect(() => {
+    if (!perfVertDrag) return;
+    document.body.style.cursor     = "ns-resize";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (e: MouseEvent) => {
+      const keys = perfOrderedRef.current;
+      let dropIdx = keys.length;
+      for (let i = 0; i < keys.length; i++) {
+        const el = perfRowRefsMap.current.get(keys[i]);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (e.clientY < rect.top + rect.height / 2) { dropIdx = i; break; }
+      }
+      perfDropIdxRef.current = dropIdx;
+      setPerfDropIdx(dropIdx);
+    };
+
+    const onMouseUp = () => {
+      const drop = perfDropIdxRef.current;
+      const drag = perfVertDrag;
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+      setPerfVertDrag(null);
+      setPerfDropIdx(null);
+      perfDropIdxRef.current = null;
+
+      if (drop === null) return;
+      const keys = [...perfOrderedRef.current];
+      const fromIdx = drag.fromIdx;
+      const toIdx   = Math.min(keys.length, drop);
+      if (toIdx === fromIdx || toIdx === fromIdx + 1) return;
+      const moved = keys.splice(fromIdx, 1)[0];
+      keys.splice(toIdx > fromIdx ? toIdx - 1 : toIdx, 0, moved);
+      setPerfOrder(keys);
+      saveArray(PERF_ORDER_KEY, keys);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup",   onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup",   onMouseUp);
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+    };
+  }, [perfVertDrag]);
+
   async function handleAdd() {
     const key = addInput.trim().toUpperCase();
     if (!key.startsWith("BDSL-")) { setAddError("Use o formato BDSL-XXXXX"); return; }
@@ -683,7 +751,12 @@ export default function PerformanceDashboard() {
 
   /* ── TaskRow ── */
 
-  function TaskRow({ task, indent = false }: { task: PerfTask | PerfSubtask; indent?: boolean }) {
+  function TaskRow({ task, indent = false, onVertDragStart, isVertDragging }: {
+    task: PerfTask | PerfSubtask;
+    indent?: boolean;
+    onVertDragStart?: (e: React.MouseEvent) => void;
+    isVertDragging?: boolean;
+  }) {
     const isParent    = !indent;
     const taskKey     = (task as PerfTask).key;
     const isCollapsed = isParent && collapsed.has(taskKey);
@@ -737,6 +810,8 @@ export default function PerformanceDashboard() {
           minHeight: 36,
           background: isDragging ? "#faf9ff" : indent ? "#fafafa" : "white",
           cursor: "pointer",
+          opacity: isVertDragging ? 0.3 : 1,
+          transition: "opacity 0.1s",
         }}
       >
         {/* ── Label cell ── */}
@@ -744,6 +819,22 @@ export default function PerformanceDashboard() {
           padding: indent ? "0 8px 0 26px" : "0 6px 0 8px",
           display: "flex", alignItems: "center", gap: 4, minWidth: 0,
         }}>
+          {/* Vertical reorder handle — parent tasks only */}
+          {isParent && onVertDragStart && (
+            <div
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onVertDragStart(e); }}
+              title="Arrastar para reordenar"
+              style={{
+                cursor: "ns-resize", flexShrink: 0, display: "flex",
+                flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 2, height: 14, padding: "0 2px",
+              }}
+            >
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{ width: 8, height: 1.5, background: "#d1d5db", borderRadius: 1 }} />
+              ))}
+            </div>
+          )}
           {isParent && (
             <button
               onClick={e => { e.stopPropagation(); toggleCollapsed(taskKey); }}
@@ -1201,20 +1292,42 @@ export default function PerformanceDashboard() {
           </div>
 
           {/* Task rows */}
-          {visibleActive.length === 0 && (
+          {orderedVisibleActive.length === 0 && (
             <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
               Nenhuma task ativa encontrada para o time de Performance.
             </div>
           )}
 
-          {visibleActive.map((task) => (
-            <div key={task.key}>
-              <TaskRow task={task} />
+          {/* Sync ordered keys ref so vertical drag useEffect can read them */}
+          {(perfOrderedRef.current = orderedVisibleActive.map((t) => t.key), null)}
+
+          {orderedVisibleActive.map((task, idx) => (
+            <div
+              key={task.key}
+              ref={(el) => {
+                if (el) perfRowRefsMap.current.set(task.key, el);
+                else perfRowRefsMap.current.delete(task.key);
+              }}
+              style={{
+                borderTop: perfDropIdx === idx && perfVertDrag
+                  ? "2px solid #7c3aed" : "2px solid transparent",
+              }}
+            >
+              <TaskRow
+                task={task}
+                onVertDragStart={() => setPerfVertDrag({ taskKey: task.key, fromIdx: idx })}
+                isVertDragging={perfVertDrag?.taskKey === task.key}
+              />
               {!collapsed.has(task.key) && task.subtasks.map((st) => (
                 <TaskRow key={st.key} task={st as unknown as PerfTask} indent />
               ))}
             </div>
           ))}
+
+          {/* Drop indicator at end of list */}
+          {perfDropIdx === orderedVisibleActive.length && perfVertDrag && (
+            <div style={{ height: 2, background: "#7c3aed", margin: 0 }} />
+          )}
         </div>
       </div>
 

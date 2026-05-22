@@ -158,7 +158,6 @@ function layoutBars(
   tasks: TaskItem[],
   days: Date[],
   startOverrides: Record<string, number> = {},
-  laneOverrides: Record<string, number> = {},
 ): Bar[] {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -227,39 +226,9 @@ function layoutBars(
         color: projectColor(project),
       } as Bar;
     })
-    .filter((x): x is Bar => x !== null)
-    .sort((a, b) => a.endCol - b.endCol || a.startCol - b.startCol);
-
-  // Lane allocation: two-pass — locked lanes first, then greedy first-fit
-  const lanes: number[] = []; // last occupied endCol per lane
-
-  // Pass 1: place bars with a locked lane (dragged bars keep their row)
-  for (const bar of candidates) {
-    const locked = laneOverrides[bar.task.id];
-    if (locked === undefined) continue;
-    bar.lane = locked;
-    while (lanes.length <= locked) lanes.push(0);
-    lanes[locked] = Math.max(lanes[locked], bar.endCol);
-  }
-
-  // Pass 2: greedy first-fit for the rest
-  for (const bar of candidates) {
-    if (laneOverrides[bar.task.id] !== undefined) continue;
-    let placed = false;
-    for (let l = 0; l < lanes.length; l++) {
-      if (bar.startCol > lanes[l]) {
-        bar.lane = l;
-        lanes[l] = bar.endCol;
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) {
-      bar.lane = lanes.length;
-      lanes.push(bar.endCol);
-    }
-  }
-
+    .filter((x): x is Bar => x !== null);
+  // One task per line — preserve input order, assign sequential lanes
+  candidates.forEach((b, i) => { b.lane = i; });
   return candidates;
 }
 
@@ -282,7 +251,13 @@ export default function Dashboard() {
 
   // ── Drag-resize state ──
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
-  const [laneOverrides, setLaneOverrides] = useState<Record<string, number>>({});
+  // ── Vertical reorder state ──
+  const [taskOrders, setTaskOrders] = useState<Record<string, string[]>>({});
+  const [vertDrag, setVertDrag] = useState<{ memberName: string; taskId: string; fromIdx: number } | null>(null);
+  const [vertDropIdx, setVertDropIdx] = useState<{ memberName: string; idx: number } | null>(null);
+  const barZoneRefs    = useRef<Map<string, HTMLDivElement>>(new Map());
+  const vertDropIdxRef = useRef<{ memberName: string; idx: number } | null>(null);
+  const rowsRef        = useRef<Array<{ member: MemberItem; bars: Bar[] }>>([]);
   const [dragState, setDragState] = useState<{
     key: string;
     handle: "left" | "right";
@@ -331,6 +306,17 @@ export default function Dashboard() {
       }
     }
     if (Object.keys(saved).length > 0) setStartOverrides(saved);
+
+    // Load vertical order overrides
+    const orders: Record<string, string[]> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (k.startsWith("gantt_order_")) {
+        try { orders[k.slice("gantt_order_".length)] = JSON.parse(localStorage.getItem(k)!); }
+        catch { /* ignore */ }
+      }
+    }
+    if (Object.keys(orders).length > 0) setTaskOrders(orders);
   }, []);
 
   // Global drag mouse events
@@ -402,6 +388,61 @@ export default function Dashboard() {
     }
   }, [dragState]);
 
+  // ── Vertical drag-to-reorder ──
+  useEffect(() => {
+    if (!vertDrag) return;
+    document.body.style.cursor     = "ns-resize";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (e: MouseEvent) => {
+      const el = barZoneRefs.current.get(vertDrag.memberName);
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const relY  = e.clientY - rect.top - 10; // 10px top padding
+      const idx   = Math.max(0, Math.round(relY / 32));
+      const dp    = { memberName: vertDrag.memberName, idx };
+      vertDropIdxRef.current = dp;
+      setVertDropIdx(dp);
+    };
+
+    const onMouseUp = () => {
+      const drop = vertDropIdxRef.current;
+      const drag = vertDrag;
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+      setVertDrag(null);
+      setVertDropIdx(null);
+      vertDropIdxRef.current = null;
+      if (!drop) return;
+
+      const rowData = rowsRef.current.find(r => r.member.name === drag.memberName);
+      if (!rowData) return;
+      const numBars = rowData.bars.length;
+      const toIdx   = Math.min(numBars, drop.idx);
+      const fromIdx = drag.fromIdx;
+      if (toIdx === fromIdx || toIdx === fromIdx + 1) return;
+
+      const ids   = rowData.bars.map(b => b.task.id);
+      const moved = ids.splice(fromIdx, 1)[0];
+      ids.splice(toIdx > fromIdx ? toIdx - 1 : toIdx, 0, moved);
+
+      setTaskOrders(prev => {
+        const next = { ...prev, [drag.memberName]: ids };
+        localStorage.setItem(`gantt_order_${drag.memberName}`, JSON.stringify(ids));
+        return next;
+      });
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup",   onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup",   onMouseUp);
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+    };
+  }, [vertDrag]);
+
   async function confirmDeadline() {
     if (!pendingModal) return;
     // Push undo before API call
@@ -448,12 +489,7 @@ export default function Dashboard() {
             }
             return next;
           });
-          // Remove lane lock so bar goes back to natural layout
-          setLaneOverrides((prev) => {
-            const next = { ...prev };
-            delete next[last.key];
-            return next;
-          });
+          // (lane overrides no longer used — one-task-per-line layout)
         } else if (last.type === "deadline") {
           // Restore previous dueDate in Jira
           if (last.prevDate) {
@@ -494,13 +530,22 @@ export default function Dashboard() {
   });
 
   const rows = sorted.map((m) => {
-    const cfg = getConfig(m.name);
+    const cfg    = getConfig(m.name);
     const active = m.tasks.filter((t) => t.status !== "done");
-    const bars = layoutBars(active, days, startOverrides, laneOverrides);
-    const lanes = bars.length === 0 ? 0 : Math.max(...bars.map((b) => b.lane)) + 1;
+    // Apply saved vertical order
+    const customOrder = taskOrders[m.name] || [];
+    const orderedActive = customOrder.length > 0
+      ? [
+          ...customOrder.map(id => active.find(t => t.id === id)).filter(Boolean) as TaskItem[],
+          ...active.filter(t => !customOrder.includes(t.id)),
+        ]
+      : active;
+    const bars    = layoutBars(orderedActive, days, startOverrides);
+    const lanes   = bars.length; // one per line
     const backlog = active.filter((t) => !t.dueDate).length;
     return { member: m, cfg, bars, lanes, backlog };
   });
+  rowsRef.current = rows.map(r => ({ member: r.member, bars: r.bars }));
 
   if (src === "loading") return <Shell><p style={{ color: "#9ca3af", textAlign: "center", padding: 80 }}>Conectando ao Jira...</p></Shell>;
   if (src === "err") return <Shell><p style={{ color: "#dc2626", textAlign: "center", padding: 80 }}>Erro ao conectar. Recarregue.</p></Shell>;
@@ -674,9 +719,22 @@ export default function Dashboard() {
 
                 {/* Bar zone — relative container spanning 5 columns */}
                 <div
-                  ref={(el) => { if (!barZoneRef.current && el) barZoneRef.current = el; }}
+                  ref={(el) => {
+                    if (el) barZoneRefs.current.set(member.name, el);
+                    else barZoneRefs.current.delete(member.name);
+                    if (!barZoneRef.current && el) barZoneRef.current = el;
+                  }}
                   style={{ gridColumn: "2 / 7", position: "relative", padding: "10px 0" }}
                 >
+                  {/* Vertical drop indicator */}
+                  {vertDropIdx?.memberName === member.name && (
+                    <div style={{
+                      position: "absolute", left: 0, right: 0, zIndex: 20,
+                      top: vertDropIdx.idx * 32 + 8 - 2,
+                      height: 2, background: "#7c3aed", borderRadius: 1,
+                      pointerEvents: "none",
+                    }} />
+                  )}
                   {/* Vertical day separators */}
                   {days.map((d, i) => {
                     const isT = sameDay(d, today);
@@ -717,7 +775,8 @@ export default function Dashboard() {
                   })}
 
                   {/* Bars */}
-                  {bars.map((bar) => {
+                  {bars.map((bar, barIdx) => {
+                    const isVertDragging = vertDrag?.memberName === member.name && vertDrag.taskId === bar.task.id;
                     // Apply drag preview to this bar's columns
                     const isBeingDragged = dragPreview?.key === bar.task.id;
                     const displayStartCol = (isBeingDragged && dragState?.handle === "left")
@@ -779,6 +838,7 @@ export default function Dashboard() {
                           top: top + 8,
                           height: 26,
                           zIndex: isBeingDragged ? 10 : 1,
+                          opacity: isVertDragging ? 0.3 : 1,
                         }}
                       >
                         {/* Left resize handle */}
@@ -786,27 +846,44 @@ export default function Dashboard() {
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            setLaneOverrides((prev) => ({ ...prev, [bar.task.id]: bar.lane }));
                             setDragState({ key: bar.task.id, handle: "left", startX: e.clientX, initialCol: bar.startCol });
                           }}
                           title="Arrastar para mudar início"
                           style={{
                             position: "absolute",
                             left: 0, top: 0, bottom: 0,
-                            width: 14,
+                            width: 10,
                             cursor: "ew-resize",
-                            zIndex: 3,
+                            zIndex: 5,
                             borderRadius: "999px 0 0 999px",
+                          }}
+                        />
+
+                        {/* Vertical reorder handle */}
+                        <div
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setVertDrag({ memberName: member.name, taskId: bar.task.id, fromIdx: barIdx });
+                            vertDropIdxRef.current = { memberName: member.name, idx: barIdx };
+                            setVertDropIdx({ memberName: member.name, idx: barIdx });
+                          }}
+                          title="Arrastar para reordenar"
+                          style={{
+                            position: "absolute",
+                            left: 10, top: 0, bottom: 0, width: 14,
+                            cursor: "ns-resize",
+                            zIndex: 5,
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                           }}
                         >
-                          <div style={{
-                            width: 2, height: 10,
-                            background: "rgba(255,255,255,0.55)",
-                            borderRadius: 2,
-                          }} />
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2.5, pointerEvents: "none" }}>
+                            {[0,1,2].map(i => (
+                              <div key={i} style={{ width: 8, height: 1.5, background: "rgba(255,255,255,0.5)", borderRadius: 1 }} />
+                            ))}
+                          </div>
                         </div>
 
                         {/* Main bar link */}
@@ -815,14 +892,14 @@ export default function Dashboard() {
                           target="_blank"
                           rel="noopener noreferrer"
                           title={titleTip}
-                          onClick={(e) => { if (dragState) e.preventDefault(); }}
+                          onClick={(e) => { if (dragState || vertDrag) e.preventDefault(); }}
                           style={{
                             position: "absolute",
                             left: 0, right: 0, top: 0, bottom: 0,
                             background: barBg,
                             color: textColor,
                             borderRadius: 999,
-                            padding: "0 22px",
+                            padding: "0 22px 0 28px",
                             display: "flex",
                             alignItems: "center",
                             gap: 6,
@@ -837,8 +914,6 @@ export default function Dashboard() {
                               : "0 1px 2px rgba(0,0,0,0.06)",
                             borderLeft: bar.startsBefore ? "3px solid rgba(255,255,255,0.6)" : "none",
                             transition: isBeingDragged ? "none" : "box-shadow 0.15s",
-                            outline: isBeingDragged ? `2px solid ${barBg}` : "none",
-                            outlineOffset: 2,
                             userSelect: "none",
                           }}
                         >
@@ -853,27 +928,22 @@ export default function Dashboard() {
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            setLaneOverrides((prev) => ({ ...prev, [bar.task.id]: bar.lane }));
                             setDragState({ key: bar.task.id, handle: "right", startX: e.clientX, initialCol: bar.endCol });
                           }}
                           title="Arrastar para mudar prazo"
                           style={{
                             position: "absolute",
                             right: 0, top: 0, bottom: 0,
-                            width: 14,
+                            width: 10,
                             cursor: "ew-resize",
-                            zIndex: 3,
+                            zIndex: 5,
                             borderRadius: "0 999px 999px 0",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                           }}
                         >
-                          <div style={{
-                            width: 2, height: 10,
-                            background: "rgba(255,255,255,0.55)",
-                            borderRadius: 2,
-                          }} />
+                          <div style={{ width: 2, height: 10, background: "rgba(255,255,255,0.55)", borderRadius: 2 }} />
                         </div>
                       </div>
                     );
