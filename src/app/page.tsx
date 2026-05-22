@@ -629,7 +629,7 @@ export default function Dashboard() {
         <div style={{ minWidth: 680 }}>
 
           {/* Header: day columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)", borderBottom: "1px solid #eef0f3" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)", borderBottom: "1px solid #eef0f3", position: "sticky", top: 0, background: "white", zIndex: 10 }}>
             <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>
               Time
             </div>

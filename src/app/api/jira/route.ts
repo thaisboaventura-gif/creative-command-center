@@ -139,12 +139,18 @@ export async function GET() {
     // Query 3: active subtasks assigned to any team member — used to pull in
     // parent tasks where the team member is only at subtask level.
     const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done`;
+    // Query 4: tasks created by Thais with no assignee yet — "waiting for distribution"
+    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND status != Done ORDER BY created DESC`;
 
-    const [boardIssues, newIssues, teamSubsRaw] = await Promise.all([
+    const [boardIssues, newIssues, teamSubsRaw, thaisUnassigned] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
       fetchAllIssues(base, auth, newJql, 1),
       fetchAllIssues(base, auth, subJql, 3).catch((e) => {
         console.error("[jira] subJql failed:", e);
+        return [] as JiraIssue[];
+      }),
+      fetchAllIssues(base, auth, thaisJql, 2).catch((e) => {
+        console.error("[jira] thaisJql failed:", e);
         return [] as JiraIssue[];
       }),
     ]);
@@ -281,6 +287,31 @@ export async function GET() {
       }
     }
 
+    // Unassigned tasks created by Thais → virtual "Sem dono" row
+    const SEM_DONO = "Sem dono";
+    const thaisBrasil = thaisUnassigned.filter(isBrasil);
+    console.log("[jira] thaisUnassigned brasil:", thaisBrasil.length);
+    for (const issue of thaisBrasil) {
+      if (!teamMap.has(SEM_DONO)) {
+        teamMap.set(SEM_DONO, { name: SEM_DONO, avatar: "SD", role: "", tasks: [] });
+      }
+      // Skip if somehow already present
+      if (teamMap.get(SEM_DONO)!.tasks.some((t) => t.key === issue.key)) continue;
+      const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
+      teamMap.get(SEM_DONO)!.tasks.push({
+        id: issue.key,
+        key: issue.key,
+        title: issue.fields.summary,
+        status: mapStatus(issue.fields.status?.name || ""),
+        priority: mapPriority(issue.fields.priority?.name || "Medium"),
+        assignee: SEM_DONO,
+        dueDate: issue.fields.duedate || null,
+        estimatedHours: est.hours,
+        estimatedDetail: est.detail,
+        createdAt: issue.fields.created?.split("T")[0] || "",
+      });
+    }
+
     const WEEKLY_HOURS = 40;
     const team = Array.from(teamMap.values())
       .map((m) => ({
@@ -347,6 +378,8 @@ export async function GET() {
         subTasksFound: teamSubs.length,
         subParentKeys: [...subParentMap.keys()],
         extraParentsFetched: extraParents.length,
+        thaisUnassignedFetched: thaisUnassigned.length,
+        thaisUnassignedBrasil: thaisBrasil.length,
         subJql,
       },
     });
