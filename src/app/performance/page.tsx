@@ -10,8 +10,9 @@ type LoadState = "loading" | "ok" | "err";
 
 /* ─── Constants ─── */
 
-const JIRA_BASE  = "https://tiendanube.atlassian.net/browse";
-const LABEL_W    = 220; // px — task name column
+const JIRA_BASE      = "https://tiendanube.atlassian.net/browse";
+const LABEL_W_DEFAULT = 220; // px — task name column (default)
+const LABEL_W_KEY     = "perf_label_w_v1";
 
 const PROJECT_PALETTE = [
   "#5b6cff", "#6dd49e", "#ee8094", "#fb923c",
@@ -218,6 +219,7 @@ function calcBar(
 const HIDDEN_KEY       = "perf_hidden_v1";
 const COLLAPSED_KEY    = "perf_collapsed_v1";
 const DONE_MONTHS_KEY  = "perf_done_months_v1";
+const MANUAL_KEY       = "perf_manual_tasks_v1";
 
 const PT_MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
                    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -231,6 +233,17 @@ function loadSet(key: string): Set<string> {
 
 function saveSet(key: string, s: Set<string>) {
   try { localStorage.setItem(key, JSON.stringify([...s])); } catch { /* noop */ }
+}
+
+function loadArray(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveArray(key: string, arr: string[]) {
+  try { localStorage.setItem(key, JSON.stringify(arr)); } catch { /* noop */ }
 }
 
 /* ─── Delivery helpers ─── */
@@ -319,28 +332,88 @@ export default function PerformanceDashboard() {
   const [offset,     setOffset]     = useState(0);
   const [hidden,     setHidden]     = useState<Set<string>>(new Set());
   const [collapsed,  setCollapsed]  = useState<Set<string>>(new Set());
+  const [manualKeys, setManualKeys] = useState<string[]>([]);
   const [addInput,   setAddInput]   = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState("");
   const [tooltip,           setTooltip]           = useState<TooltipState | null>(null);
   const [doneMonthsCollapsed, setDoneMonthsCollapsed] = useState<Set<string>>(new Set());
   const [deliveredSearch,   setDeliveredSearch]   = useState("");
-  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [labelWidth,        setLabelWidth]        = useState(LABEL_W_DEFAULT);
+  const [isResizingLabel,   setIsResizingLabel]   = useState(false);
+  const tooltipTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const labelResizeRef   = useRef<{ startX: number; startW: number } | null>(null);
 
   // Load persisted state from localStorage on mount
   useEffect(() => {
     setHidden(loadSet(HIDDEN_KEY));
     setCollapsed(loadSet(COLLAPSED_KEY));
+    const savedW = parseInt(localStorage.getItem(LABEL_W_KEY) ?? "");
+    if (!isNaN(savedW) && savedW >= 120) setLabelWidth(savedW);
   }, []);
+
+  // Label column resize — global mouse events while dragging
+  useEffect(() => {
+    if (!isResizingLabel) return;
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!labelResizeRef.current) return;
+      const delta = e.clientX - labelResizeRef.current.startX;
+      const newW  = Math.max(120, Math.min(560, labelResizeRef.current.startW + delta));
+      setLabelWidth(newW);
+    };
+
+    const onMouseUp = () => {
+      setIsResizingLabel(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setLabelWidth((w) => {
+        localStorage.setItem(LABEL_W_KEY, String(w));
+        return w;
+      });
+      labelResizeRef.current = null;
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup",   onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup",   onMouseUp);
+    };
+  }, [isResizingLabel]);
 
   // Fetch tasks
   useEffect(() => {
     setSrc("loading");
     fetch("/api/performance")
       .then((r) => r.json())
-      .then((d) => {
+      .then(async (d) => {
         if (!d.tasks) { setSrc("err"); return; }
-        setTasks(d.tasks);
+
+        let allTasks: PerfTask[] = d.tasks;
+
+        // Re-fetch manually added tasks saved in localStorage
+        const savedKeys = loadArray(MANUAL_KEY);
+        setManualKeys(savedKeys);
+        if (savedKeys.length > 0) {
+          const fetched = await Promise.all(
+            savedKeys.map((k) =>
+              fetch(`/api/performance?key=${k}`)
+                .then((r) => r.json())
+                .then((data) => data.task ?? null)
+                .catch(() => null)
+            )
+          );
+          const valid = fetched.filter(Boolean) as PerfTask[];
+          const existing = new Set(allTasks.map((t) => t.key));
+          const newOnes = valid.filter((t) => !existing.has(t.key));
+          allTasks = [...newOnes, ...allTasks];
+        }
+
+        setTasks(allTasks);
         setSrc("ok");
 
         // Initialize done-months collapse state on first visit
@@ -350,7 +423,7 @@ export default function PerformanceDashboard() {
         } else {
           const curKey = monthKey(new Date());
           const toCollapse = new Set<string>(
-            (d.tasks as PerfTask[])
+            (allTasks as PerfTask[])
               .filter(isFullyDone)
               .map(getDeliveryDate)
               .filter(Boolean)
@@ -371,7 +444,7 @@ export default function PerformanceDashboard() {
   const today = new Date();
 
   // CSS grid: task label column + N day columns, each filling available space (min 50px)
-  const GRID_COLS = `${LABEL_W}px repeat(${days.length}, minmax(50px, 1fr))`;
+  const GRID_COLS = `${labelWidth}px repeat(${days.length}, minmax(50px, 1fr))`;
 
   // Visible window: first and last calendar day currently shown
   const windowStart = useMemo(() => { const d = new Date(days[0]); d.setHours(0,0,0,0); return d; }, [days]);
@@ -464,16 +537,31 @@ export default function PerformanceDashboard() {
       const data = await res.json();
       if (!res.ok || data.error) { setAddError(data.error || "Não encontrada"); return; }
       setTasks((prev) => [data.task, ...prev]);
-      const next = new Set(hidden);
-      next.delete(key);
-      setHidden(next);
-      saveSet(HIDDEN_KEY, next);
+
+      // Persist manual key so it survives refresh
+      const nextKeys = [...manualKeys.filter((k) => k !== key), key];
+      setManualKeys(nextKeys);
+      saveArray(MANUAL_KEY, nextKeys);
+
+      // Remove from hidden if it was there
+      const nextHidden = new Set(hidden);
+      nextHidden.delete(key);
+      setHidden(nextHidden);
+      saveSet(HIDDEN_KEY, nextHidden);
+
       setAddInput("");
     } catch {
       setAddError("Erro de conexão");
     } finally {
       setAddLoading(false);
     }
+  }
+
+  function removeManualTask(key: string) {
+    setTasks((prev) => prev.filter((t) => t.key !== key));
+    const nextKeys = manualKeys.filter((k) => k !== key);
+    setManualKeys(nextKeys);
+    saveArray(MANUAL_KEY, nextKeys);
   }
 
   /* ── Month stats ── */
@@ -578,8 +666,12 @@ export default function PerformanceDashboard() {
 
           {isParent && (
             <button
-              onClick={e => { e.stopPropagation(); hideTask(taskKey); }}
-              title="Ocultar task"
+              onClick={e => {
+                e.stopPropagation();
+                if (manualKeys.includes(taskKey)) removeManualTask(taskKey);
+                else hideTask(taskKey);
+              }}
+              title={manualKeys.includes(taskKey) ? "Remover task incluída manualmente" : "Ocultar task"}
               style={{
                 background: "none", border: "none", cursor: "pointer",
                 color: "#d1d5db", fontSize: 11, padding: "1px 3px",
@@ -913,8 +1005,34 @@ export default function PerformanceDashboard() {
             borderBottom: "1px solid #eef0f3",
             position: "sticky", top: 0, background: "white", zIndex: 10,
           }}>
-            <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase" }}>
+            <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", position: "relative" }}>
               Task
+              {/* Resize handle */}
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  labelResizeRef.current = { startX: e.clientX, startW: labelWidth };
+                  setIsResizingLabel(true);
+                }}
+                title="Arrastar para redimensionar coluna"
+                style={{
+                  position: "absolute",
+                  right: 0, top: 0, bottom: 0,
+                  width: 8,
+                  cursor: "col-resize",
+                  zIndex: 2,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <div style={{
+                  width: 3, height: 18,
+                  background: isResizingLabel ? "#7c3aed" : "#e5e7eb",
+                  borderRadius: 2,
+                  transition: "background 0.1s",
+                }} />
+              </div>
             </div>
             {days.map((d, i) => {
               const isT = sameDay(d, today);
