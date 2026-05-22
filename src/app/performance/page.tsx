@@ -41,6 +41,18 @@ function parseLocalDate(s: string): Date {
   return dt;
 }
 
+function formatLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+interface BarDragState {
+  key:         string;
+  startX:      number;
+  dueDateIdx:  number;   // 0-based index in days[] corresponding to the bar's endCol
+  originalDue: string;   // "YYYY-MM-DD" — used for rollback
+  jiraHref:    string;
+}
+
 /** Returns 10 working days (Mon–Fri × 2 weeks) starting from the current Monday + offset.
  *  Each offset unit = 7 calendar days (1 week), so the arrow scrolls by 1 week at a time. */
 function getTwoWeekDays(offsetWeeks: number): Date[] {
@@ -341,8 +353,12 @@ export default function PerformanceDashboard() {
   const [deliveredSearch,   setDeliveredSearch]   = useState("");
   const [labelWidth,        setLabelWidth]        = useState(LABEL_W_DEFAULT);
   const [isResizingLabel,   setIsResizingLabel]   = useState(false);
+  const [barDragState,      setBarDragState]      = useState<BarDragState | null>(null);
+  const [barDragOffset,     setBarDragOffset]     = useState(0);
   const tooltipTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const labelResizeRef   = useRef<{ startX: number; startW: number } | null>(null);
+  const barDragOffsetRef = useRef(0);
+  const ganttContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Load persisted state from localStorage on mount
   useEffect(() => {
@@ -525,6 +541,87 @@ export default function PerformanceDashboard() {
     if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
   }
 
+  // Bar drag-and-drop — global mouse events while dragging
+  useEffect(() => {
+    if (!barDragState) return;
+
+    document.body.style.cursor     = "grabbing";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (e: MouseEvent) => {
+      const el = ganttContainerRef.current;
+      if (!el) return;
+      const colWidth = (el.offsetWidth - labelWidth) / days.length;
+      const deltaCols = Math.round((e.clientX - barDragState.startX) / colWidth);
+      const clamped = Math.max(
+        -barDragState.dueDateIdx,
+        Math.min(days.length - 1 - barDragState.dueDateIdx, deltaCols)
+      );
+      barDragOffsetRef.current = clamped;
+      setBarDragOffset(clamped);
+    };
+
+    const onMouseUp = async () => {
+      const offset = barDragOffsetRef.current;
+      const state  = barDragState;
+
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+      setBarDragState(null);
+      setBarDragOffset(0);
+      barDragOffsetRef.current = 0;
+
+      if (offset === 0) {
+        // No movement → treat as click, open Jira
+        window.open(state.jiraHref, "_blank");
+        return;
+      }
+
+      const newIdx     = Math.max(0, Math.min(days.length - 1, state.dueDateIdx + offset));
+      const newDateStr = formatLocalDate(days[newIdx]);
+
+      // Optimistic UI update
+      setTasks((prev) => prev.map((t) => {
+        if (t.key === state.key) return { ...t, dueDate: newDateStr };
+        return {
+          ...t,
+          subtasks: t.subtasks.map((st) =>
+            st.key === state.key ? { ...st, dueDate: newDateStr } : st
+          ),
+        };
+      }));
+
+      // Persist to Jira
+      const res = await fetch("/api/jira/update-deadline", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ issueKey: state.key, newDate: newDateStr }),
+      });
+
+      if (!res.ok) {
+        // Rollback on error
+        setTasks((prev) => prev.map((t) => {
+          if (t.key === state.key) return { ...t, dueDate: state.originalDue };
+          return {
+            ...t,
+            subtasks: t.subtasks.map((st) =>
+              st.key === state.key ? { ...st, dueDate: state.originalDue } : st
+            ),
+          };
+        }));
+      }
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup",   onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup",   onMouseUp);
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
+    };
+  }, [barDragState, days, labelWidth]);
+
   async function handleAdd() {
     const key = addInput.trim().toUpperCase();
     if (!key.startsWith("BDSL-")) { setAddError("Use o formato BDSL-XXXXX"); return; }
@@ -619,15 +716,26 @@ export default function PerformanceDashboard() {
 
     const jiraHref = `${JIRA_BASE}/${taskKey}`;
 
+    // ── Drag preview ──
+    const isDragging     = barDragState?.key === taskKey;
+    const previewOffset  = isDragging ? barDragOffset : 0;
+    const dispStartCol   = bar ? Math.max(1, Math.min(days.length, bar.startCol      + previewOffset)) : null;
+    const dispEndCol     = bar ? Math.max(1, Math.min(days.length, bar.endCol        + previewOffset)) : null;
+    const dispExecCol    = bar ? Math.max(1, Math.min(days.length, bar.execStartCol  + previewOffset)) : null;
+
     return (
       <div
-        onClick={() => window.open(jiraHref, "_blank")}
+        onClick={(e) => {
+          // Exec cells stop propagation on mousedown, so clicks there won't reach here.
+          // For all other cells, open Jira normally.
+          window.open(jiraHref, "_blank");
+        }}
         style={{
           display: "grid",
           gridTemplateColumns: GRID_COLS,
           borderBottom: "1px solid #f3f4f6",
           minHeight: 36,
-          background: indent ? "#fafafa" : "white",
+          background: isDragging ? "#faf9ff" : indent ? "#fafafa" : "white",
           cursor: "pointer",
         }}
       >
@@ -685,23 +793,22 @@ export default function PerformanceDashboard() {
         {days.map((d, i) => {
           const cellN       = i + 1;
           const isToday     = sameDay(d, today);
-          const inRange     = bar ? cellN >= bar.startCol && cellN <= bar.endCol : false;
-          const isPipeline  = bar ? inRange && cellN < bar.execStartCol : false;
-          const isExec      = bar ? inRange && cellN >= bar.execStartCol : false;
-          const isStart     = bar ? cellN === bar.startCol : false;
-          const isEnd       = bar ? cellN === bar.endCol   : false;
+          const inRange     = dispStartCol !== null && dispEndCol !== null
+            ? cellN >= dispStartCol && cellN <= dispEndCol : false;
+          const isPipeline  = dispExecCol !== null && inRange && cellN < dispExecCol;
+          const isExec      = dispExecCol !== null && inRange && cellN >= dispExecCol;
+          const isStart     = dispStartCol !== null && cellN === dispStartCol;
+          const isEnd       = dispEndCol   !== null && cellN === dispEndCol;
           const isDueCell   = isEnd && inRange;
-          const isPipeStart = isPipeline && cellN === bar!.startCol;
+          const isPipeStart = isPipeline && dispStartCol !== null && cellN === dispStartCol;
 
-          // Subtask markers — split by status:
-          // • undone → 📦 on due-date column
-          // • done   → ✅ (or ⚠️✅) on resolvedAt column
-          const undoneMarkers = (isParent && inRange)
+          // Subtask markers — hidden while dragging to avoid visual confusion
+          const undoneMarkers = (isParent && inRange && !isDragging)
             ? subWithDue.filter((st) =>
                 st.status !== "done" && sameDay(parseLocalDate(st.dueDate!), d)
               )
             : [];
-          const doneMarkers = isParent
+          const doneMarkers = (isParent && !isDragging)
             ? subWithDue.filter((st) =>
                 st.status === "done" &&
                 st.resolvedAt &&
@@ -764,16 +871,48 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* Execution phase — full-color bar */}
+              {/* Execution phase — full-color bar (draggable) */}
               {isExec && (
-                <div style={{
+                <div
+                  onMouseDown={(e) => {
+                    if (e.button !== 0 || bar!.isDone) return;
+                    e.preventDefault();
+                    e.stopPropagation(); // prevent row onClick
+                    const dueIdx = (bar?.endCol ?? 1) - 1;
+                    setBarDragState({
+                      key:         taskKey,
+                      startX:      e.clientX,
+                      dueDateIdx:  dueIdx,
+                      originalDue: task.dueDate ?? "",
+                      jiraHref,
+                    });
+                    setBarDragOffset(0);
+                    barDragOffsetRef.current = 0;
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 5, bottom: 5, left: 0, right: 0,
+                    background: barColor!,
+                    filter: isDueCell && !hasSubDeadlines ? "brightness(0.78)" : undefined,
+                    opacity: bar!.isDone ? 0.45 : 1,
+                    borderRadius: execBarRadius,
+                    cursor: bar!.isDone ? "default" : isDragging ? "grabbing" : "grab",
+                  }}
+                />
+              )}
+
+              {/* Drag date indicator — shown in due cell while dragging */}
+              {isDueCell && isDragging && previewOffset !== 0 && (
+                <span style={{
                   position: "absolute",
-                  top: 5, bottom: 5, left: 0, right: 0,
-                  background: barColor!,
-                  filter: isDueCell && !hasSubDeadlines ? "brightness(0.78)" : undefined,
-                  opacity: bar!.isDone ? 0.45 : 1,
-                  borderRadius: execBarRadius,
-                }} />
+                  right: 4, top: "50%", transform: "translateY(-50%)",
+                  fontSize: 9, fontWeight: 700, color: "white",
+                  textShadow: "0 1px 2px rgba(0,0,0,.4)",
+                  whiteSpace: "nowrap", zIndex: 4, pointerEvents: "none",
+                  background: "rgba(0,0,0,0.25)", borderRadius: 4, padding: "1px 5px",
+                }}>
+                  {`${days[(bar?.endCol ?? 1) - 1 + previewOffset]?.getDate()}/${(days[(bar?.endCol ?? 1) - 1 + previewOffset]?.getMonth() ?? 0) + 1}`}
+                </span>
               )}
 
               {/* Deadline / Em atraso label — only on own due date (no subtask markers) */}
@@ -996,7 +1135,10 @@ export default function PerformanceDashboard() {
       </div>
 
       {/* ── Gantt ── */}
-      <div style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16 }}>
+      <div
+        ref={ganttContainerRef}
+        style={{ overflowX: "auto", background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16 }}
+      >
         <div style={{ width: "100%" }}>
 
           {/* Column headers */}
