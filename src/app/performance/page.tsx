@@ -356,6 +356,7 @@ export default function PerformanceDashboard() {
   const [isResizingLabel,   setIsResizingLabel]   = useState(false);
   const [barDragState,      setBarDragState]      = useState<BarDragState | null>(null);
   const [barDragOffset,     setBarDragOffset]     = useState(0);
+  const [commentedKeys,     setCommentedKeys]     = useState<Set<string>>(new Set());
   // Vertical reorder state
   const [perfOrder,     setPerfOrder]     = useState<string[]>([]);
   interface PerfVertDrag { taskKey: string; fromIdx: number; }
@@ -642,6 +643,30 @@ export default function PerformanceDashboard() {
     };
   }, [barDragState, days, labelWidth]);
 
+  // Fetch assignee comments for visible subtasks
+  useEffect(() => {
+    const subtasks: { key: string; assignee: string }[] = [];
+    for (const task of orderedVisibleActive) {
+      if (collapsed.has(task.key)) continue;
+      for (const st of task.subtasks) {
+        if (st.assignee) subtasks.push({ key: st.key, assignee: st.assignee });
+      }
+    }
+    if (subtasks.length === 0) return;
+    fetch("/api/performance/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(subtasks),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.keysWithComment))
+          setCommentedKeys(new Set(d.keysWithComment as string[]));
+      })
+      .catch(() => { /* silent — 💬 just won't appear */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedVisibleActive, collapsed]);
+
   // Vertical reorder — global mouse events while dragging a task row
   useEffect(() => {
     if (!perfVertDrag) return;
@@ -818,6 +843,20 @@ export default function PerformanceDashboard() {
     const dispEndCol     = bar ? Math.max(1, Math.min(days.length, bar.endCol        + previewOffset)) : null;
     const dispExecCol    = bar ? Math.max(1, Math.min(days.length, bar.execStartCol  + previewOffset)) : null;
 
+    // Subtask: column index where resolvedAt falls (for 📦 placement)
+    const subResolvedAtCol: number | null = !isParent
+      ? (() => {
+          const ra = (task as PerfSubtask).resolvedAt;
+          if (!ra) return null;
+          const raDate = parseLocalDate(ra); raDate.setHours(0, 0, 0, 0);
+          for (let j = 0; j < days.length; j++) {
+            const dj = new Date(days[j]); dj.setHours(0, 0, 0, 0);
+            if (dj.getTime() === raDate.getTime()) return j + 1;
+          }
+          return null;
+        })()
+      : null;
+
     return (
       <div
         onClick={(e) => {
@@ -914,21 +953,26 @@ export default function PerformanceDashboard() {
           const isStart     = dispStartCol !== null && cellN === dispStartCol;
           const isEnd       = dispEndCol   !== null && cellN === dispEndCol;
           const isDueCell   = isEnd && inRange;
-          const isPipeStart = isPipeline && dispStartCol !== null && cellN === dispStartCol;
+          const isPipeStart  = isPipeline && dispStartCol !== null && cellN === dispStartCol;
+          const isAfterDue   = !inRange && dispEndCol !== null && cellN > dispEndCol;
+          const isResolvedCell = subResolvedAtCol !== null && cellN === subResolvedAtCol;
+          const hasComment   = commentedKeys.has(taskKey);
 
-          // Subtask markers — hidden while dragging to avoid visual confusion
-          const undoneMarkers = (isParent && inRange && !isDragging)
-            ? subWithDue.filter((st) =>
-                st.status !== "done" && sameDay(parseLocalDate(st.dueDate!), d)
-              )
-            : [];
-          const doneMarkers = (isParent && !isDragging)
-            ? subWithDue.filter((st) =>
-                st.status === "done" &&
-                st.resolvedAt &&
-                sameDay(parseLocalDate(st.resolvedAt), d)
-              )
-            : [];
+          // Subtask cell emoji (Melhoria 1 + 2)
+          const subEmoji: string | null = !isParent && bar ? (() => {
+            const base = hasComment ? "💬" : "";
+            if (isResolvedCell && bar.isDone) return "📦" + base;
+            if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦" + base;
+            if (isDueCell && bar.isWaiting) return "📦⏳" + base;
+            if (isDueCell && bar.overdue && !bar.isDone) return "❗" + base;
+            if (isAfterDue && bar.overdue && !bar.isDone) return "❗";
+            if (isDueCell && !bar.overdue && !bar.isDone && !bar.isWaiting) return base || null;
+            return null;
+          })() : null;
+
+          // Subtask due cell bg override
+          const subDueBg = !isParent && isDueCell && bar?.overdue && !bar.isDone && !bar.isWaiting
+            ? "#FEE2E2" : undefined;
 
           const isWeekEnd   = i < days.length - 1 && days[i + 1].getDay() === 1;
           const borderRight = isToday
@@ -959,7 +1003,7 @@ export default function PerformanceDashboard() {
                 borderRight,
                 borderLeft: isExecStart ? `${isParent ? 4 : 2}px solid ${styles.leftBorder}` : undefined,
                 minHeight: isParent ? 32 : 28,
-                background: !inRange && isToday ? "#f5f3ff" : "transparent",
+                background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
                 overflow: "visible",
               }}
             >
@@ -1017,6 +1061,20 @@ export default function PerformanceDashboard() {
                 />
               )}
 
+              {/* Subtask cell emoji (deadline status + comment indicator) */}
+              {subEmoji && !isDragging && (
+                <span style={{
+                  position: "absolute",
+                  top: "50%", left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  fontSize: 11, lineHeight: 1,
+                  zIndex: 3, pointerEvents: "none", userSelect: "none",
+                  whiteSpace: "nowrap",
+                }}>
+                  {subEmoji}
+                </span>
+              )}
+
               {/* Drag date indicator — shown in due cell while dragging */}
               {isDueCell && isDragging && previewOffset !== 0 && (
                 <span style={{
@@ -1055,84 +1113,7 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* 📦 undone subtask deadline markers */}
-              {undoneMarkers.map((st) => {
-                const stDateLabel = (() => {
-                  const dt = parseLocalDate(st.dueDate!);
-                  return `${dt.getDate()}/${dt.getMonth() + 1}`;
-                })();
-                return (
-                  <span
-                    key={st.key}
-                    onClick={e => e.stopPropagation()}
-                    onMouseEnter={(e) => {
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      showTooltip({
-                        title: st.title,
-                        dateLabel: stDateLabel,
-                        link: `${JIRA_BASE}/${st.key}`,
-                        x: rect.left + rect.width / 2,
-                        y: rect.bottom + 6,
-                        isDone: false,
-                      });
-                    }}
-                    onMouseLeave={hideTooltip}
-                    style={{
-                      position: "absolute",
-                      top: "50%", left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      fontSize: 12, lineHeight: 1,
-                      cursor: "pointer", zIndex: 3,
-                      userSelect: "none",
-                      filter: "drop-shadow(0 1px 1px rgba(0,0,0,.3))",
-                    }}
-                  >
-                    📦
-                  </span>
-                );
-              })}
-
-              {/* ✅ / ⚠️✅ done subtask markers — shown on resolvedAt column */}
-              {doneMarkers.map((st) => {
-                const resolvedDate = parseLocalDate(st.resolvedAt!);
-                const resolvedLabel = `${resolvedDate.getDate()}/${resolvedDate.getMonth() + 1}`;
-                const isLate = st.dueDate
-                  ? resolvedDate > parseLocalDate(st.dueDate)
-                  : false;
-                return (
-                  <span
-                    key={st.key}
-                    onClick={e => e.stopPropagation()}
-                    onMouseEnter={(e) => {
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      showTooltip({
-                        title: isLate
-                          ? `${st.title} — ⚠️ Entregue com atraso`
-                          : st.title,
-                        dateLabel: resolvedLabel,
-                        link: `${JIRA_BASE}/${st.key}`,
-                        x: rect.left + rect.width / 2,
-                        y: rect.bottom + 6,
-                        isDone: true,
-                      });
-                    }}
-                    onMouseLeave={hideTooltip}
-                    style={{
-                      position: "absolute",
-                      top: "50%", left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      fontSize: 12, lineHeight: 1,
-                      cursor: "pointer", zIndex: 3,
-                      userSelect: "none",
-                      filter: "drop-shadow(0 1px 1px rgba(0,0,0,.3))",
-                      display: "flex", alignItems: "center", gap: 1,
-                    }}
-                  >
-                    {isLate && <span style={{ fontSize: 10 }}>⚠️</span>}
-                    <span>✅</span>
-                  </span>
-                );
-              })}
+              {/* Parent task emoji markers removed (Melhoria 3) — subtasks show their own indicators */}
             </div>
           );
         })}
