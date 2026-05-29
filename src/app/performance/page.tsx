@@ -980,14 +980,18 @@ export default function PerformanceDashboard() {
           const hasComment   = commentedKeys.has(taskKey);
 
           // Subtask cell emoji (Melhoria 1 + 2)
+          // isOverdue: past deadline, not done, not waiting feedback
+          const isSubOverdue = !isParent && !!bar && bar.overdue && !bar.isDone && !bar.isWaiting;
+
           const subEmoji: string | null = !isParent && bar ? (() => {
-            const base = hasComment ? "💬" : "";
-            if (isResolvedCell && bar.isDone) return "📦" + base;
-            if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦" + base;
-            if (isDueCell && bar.isWaiting) return "📦⏳" + base;
-            if (isDueCell && bar.overdue && !bar.isDone) return "❗" + base;
-            if (isAfterDue && bar.overdue && !bar.isDone) return "❗";
-            if (isDueCell && !bar.overdue && !bar.isDone && !bar.isWaiting) return base || null;
+            // ✅ Entregue — 📦 no dia da entrega real (resolvedAt) ou no due date como fallback
+            if (isResolvedCell && bar.isDone) return "📦";
+            if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦";
+            // ⏳ Waiting feedback — 📦⏳ no due date
+            if (isDueCell && bar.isWaiting) return "📦⏳";
+            // ❗ Em atraso — no due date e nos dias seguintes (sem done, sem waiting)
+            if (isDueCell && isSubOverdue) return hasComment ? "❗💬" : "❗";
+            if (isAfterDue && isSubOverdue) return hasComment ? "❗💬" : "❗";
             return null;
           })() : null;
 
