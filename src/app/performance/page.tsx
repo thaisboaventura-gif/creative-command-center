@@ -1039,7 +1039,7 @@ export default function PerformanceDashboard() {
                 // Parent: borda no início do pipeline (primeiro cell do range), Subtask: no início do exec
                 borderLeft: (isParent ? (isStart && !bar?.startsBefore) : isExecStart)
                   ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
-                minHeight: isWaitingDueCell ? 56 : isParent ? 32 : 28,
+                minHeight: isParent ? 32 : 28,
                 background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
                 overflow: "visible",
               }}
@@ -1126,21 +1126,18 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* Waiting-feedback subtask due cell — two stacked lines */}
+              {/* Waiting-feedback subtask due cell — only emojis, centered, tooltip on hover */}
               {isWaitingDueCell && (
-                <div style={{
-                  position: "absolute", inset: 0,
-                  display: "flex", flexDirection: "column",
-                  justifyContent: "center", alignItems: "flex-start",
-                  gap: 2, padding: "0 6px",
-                  pointerEvents: "none", zIndex: 1,
-                }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: styles.labelColor, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
-                    📦 Entregue
-                  </span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: styles.labelColor, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
-                    ⏳ Aguardando
-                  </span>
+                <div
+                  title="Entregue · Aguardando feedback"
+                  style={{
+                    position: "absolute", inset: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 13, zIndex: 1, pointerEvents: "none",
+                    userSelect: "none",
+                  }}
+                >
+                  📦⏳
                 </div>
               )}
 
