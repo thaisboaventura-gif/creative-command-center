@@ -15,7 +15,12 @@ const LABEL_W_DEFAULT = 220; // px — task name column (default)
 const LABEL_W_KEY     = "perf_label_w_v1";
 
 const PROJECT_PALETTE = [
-  "#93C5FD", "#F9A8D4", "#6EE7B7", "#FCD34D", "#C4B5FD", "#FCA5A5", "#67E8F9",
+  "#5B8DEF", // azul médio
+  "#E8715A", // coral/terracota
+  "#63B38A", // verde médio
+  "#C67BC4", // lilás médio
+  "#E8A93A", // âmbar médio
+  "#5BC4C4", // teal médio
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -210,12 +215,8 @@ function calcBar(
   const isWaiting  = status === "in_review";
   const overdue    = !isDone && due < now;
   const isDueToday = !isDone && !isWaiting && due.getTime() === now.getTime();
-  // isWaiting always takes priority — the team delivered, waiting on feedback
-  const color      = isDone               ? "#9ca3af"
-                   : isWaiting            ? "#d1fae5"
-                   : isDueToday           ? "#fbbf24"
-                   : overdue              ? "#ef4444"
-                   : projectColor(title);
+  // Color is always the project color — status display is handled in TaskRow
+  const color      = projectColor(title);
 
   const dueLabel = `${due.getDate()}/${due.getMonth() + 1}`;
 
@@ -782,10 +783,31 @@ export default function PerformanceDashboard() {
       (task as PerfTask).assignee ?? (task as PerfSubtask).assignee,
     );
 
-    // Parent with sub-deadlines gets a darker bar
-    const barColor = bar
-      ? (hasSubDeadlines ? darkenHex(bar.color, 0.28) : bar.color)
-      : null;
+    // ── New style system ──────────────────────────────────────────────────────
+    // Project color is always the base; status + parent/subtask determines display
+    const projectCol = bar?.color ?? "#9ca3af";
+
+    interface BarStyles {
+      barBg: string; barOpacity: number;
+      labelColor: string; leftBorder: string;
+      prefix: string | null;
+    }
+    const styles: BarStyles = (() => {
+      if (!bar)              return { barBg: "#F3F4F6", barOpacity: 1, labelColor: "#9ca3af", leftBorder: "#D1D5DB", prefix: null };
+      if (bar.isDone)        return { barBg: "#F3F4F6", barOpacity: 1, labelColor: "#6B7280", leftBorder: "#D1D5DB", prefix: "✅" };
+      if (bar.isWaiting)     return { barBg: projectCol, barOpacity: 0.4, labelColor: isParent ? darkenHex(projectCol, 0.4) : projectCol, leftBorder: projectCol, prefix: "⏳" };
+      if (bar.isDueToday)    return { barBg: "#FEF3C7", barOpacity: 1, labelColor: "#92400E", leftBorder: "#F59E0B", prefix: "📅" };
+      if (bar.overdue)       return { barBg: "#FEE2E2", barOpacity: 1, labelColor: "#991B1B", leftBorder: "#EF4444", prefix: "⚠️" };
+      // Normal — parent solid, subtask 40% opacity
+      return {
+        barBg: projectCol,
+        barOpacity: isParent ? 1 : 0.4,
+        labelColor: isParent ? "white" : darkenHex(projectCol, 0.35),
+        leftBorder: darkenHex(projectCol, 0.3),
+        prefix: null,
+      };
+    })();
+    // ─────────────────────────────────────────────────────────────────────────
 
     const jiraHref = `${JIRA_BASE}/${taskKey}`;
 
@@ -807,8 +829,8 @@ export default function PerformanceDashboard() {
           display: "grid",
           gridTemplateColumns: GRID_COLS,
           borderBottom: "1px solid #f3f4f6",
-          minHeight: 36,
-          background: isDragging ? "#faf9ff" : indent ? "#fafafa" : "white",
+          minHeight: isParent ? 32 : 28,
+          background: "white",
           cursor: "pointer",
           opacity: isVertDragging ? 0.3 : 1,
           transition: "opacity 0.1s",
@@ -888,6 +910,7 @@ export default function PerformanceDashboard() {
             ? cellN >= dispStartCol && cellN <= dispEndCol : false;
           const isPipeline  = dispExecCol !== null && inRange && cellN < dispExecCol;
           const isExec      = dispExecCol !== null && inRange && cellN >= dispExecCol;
+          const isExecStart = isExec && dispExecCol !== null && cellN === dispExecCol;
           const isStart     = dispStartCol !== null && cellN === dispStartCol;
           const isEnd       = dispEndCol   !== null && cellN === dispEndCol;
           const isDueCell   = isEnd && inRange;
@@ -911,7 +934,7 @@ export default function PerformanceDashboard() {
           const borderRight = isToday
             ? "1px solid #c4b5fd"
             : isDueCell
-            ? `1px solid ${barColor}`
+            ? `1px solid ${styles.leftBorder}`
             : isWeekEnd
             ? "2px solid #9ca3af"
             : "1px dashed #d1d5db";
@@ -934,18 +957,19 @@ export default function PerformanceDashboard() {
               style={{
                 position: "relative",
                 borderRight,
-                minHeight: 36,
+                borderLeft: isExecStart ? `${isParent ? 4 : 2}px solid ${styles.leftBorder}` : undefined,
+                minHeight: isParent ? 32 : 28,
                 background: !inRange && isToday ? "#f5f3ff" : "transparent",
                 overflow: "visible",
               }}
             >
-              {/* Pipeline phase — translucent bar */}
+              {/* Pipeline phase — translucent bar (project color at 10%) */}
               {isPipeline && (
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
-                  background: barColor!,
-                  opacity: 0.13,
+                  background: projectCol,
+                  opacity: 0.1,
                   borderRadius: pipeBarRadius,
                 }} />
               )}
@@ -985,9 +1009,8 @@ export default function PerformanceDashboard() {
                   style={{
                     position: "absolute",
                     top: 5, bottom: 5, left: 0, right: 0,
-                    background: barColor!,
-                    filter: isDueCell && !hasSubDeadlines ? "brightness(0.78)" : undefined,
-                    opacity: bar!.isDone ? 0.45 : 1,
+                    background: styles.barBg,
+                    opacity: styles.barOpacity,
                     borderRadius: execBarRadius,
                     cursor: bar!.isDone ? "default" : isDragging ? "grabbing" : "grab",
                   }}
@@ -1014,17 +1037,21 @@ export default function PerformanceDashboard() {
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
-                  color: (bar!.overdue && !bar!.isWaiting) ? "#b91c1c" : "rgba(0,0,0,0.65)",
+                  color: styles.labelColor,
                   textShadow: "none",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
                   maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis",
                   display: "block",
                 }}>
-                  {bar!.isWaiting && bar!.overdue
-                    ? `✅⏳ Entregue · aguardando · ${bar!.dueLabel}`
-                    : bar!.overdue
-                    ? `⚠️ Em atraso · ${bar!.dueLabel}`
-                    : `Deadline: ${bar!.dueLabel}`}
+                  {[
+                    styles.prefix,
+                    bar!.isWaiting && bar!.overdue ? "Entregue · aguardando"
+                      : bar!.overdue ? "Em atraso"
+                      : bar!.isDueToday ? "Entrega hoje"
+                      : bar!.isDone ? "Entregue"
+                      : "Deadline",
+                    `· ${bar!.dueLabel}`,
+                  ].filter(Boolean).join(" ")}
                 </span>
               )}
 

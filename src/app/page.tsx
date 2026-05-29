@@ -127,13 +127,12 @@ function extractProject(title: string): string {
 }
 
 const PROJECT_PALETTE = [
-  "#93C5FD", // azul pastel
-  "#F9A8D4", // rosa pastel
-  "#6EE7B7", // verde menta pastel
-  "#FCD34D", // amarelo pastel
-  "#C4B5FD", // lilás pastel
-  "#FCA5A5", // salmão pastel
-  "#67E8F9", // ciano pastel
+  "#5B8DEF", // azul médio
+  "#E8715A", // coral/terracota
+  "#63B38A", // verde médio
+  "#C67BC4", // lilás médio
+  "#E8A93A", // âmbar médio
+  "#5BC4C4", // teal médio
 ];
 
 function projectColor(project: string): string {
