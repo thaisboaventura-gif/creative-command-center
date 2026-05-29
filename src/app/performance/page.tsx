@@ -890,6 +890,9 @@ export default function PerformanceDashboard() {
       : null;
 
     // Correção 2: parent ✅ on the day ALL subtasks are done (latest completion date)
+    // True when every subtask is done — drives deadline vs ✅ on parent row
+    const allSubsDone = isParent && subtasks.length > 0 && subtasks.every((st) => st.status === "done");
+
     const allDoneCol: number | null = (() => {
       if (!isParent || subtasks.length === 0) return null;
       if (!subtasks.every((st) => st.status === "done")) return null;
@@ -1202,7 +1205,21 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* Parent task emoji markers removed (Melhoria 3) — subtasks show their own indicators */}
+              {/* Parent task deadline label — same style as subtask, shown when not all subs done */}
+              {isDueCell && isParent && bar && !allSubsDone && (
+                <span style={{
+                  position: "absolute",
+                  right: 4, top: "50%", transform: "translateY(-50%)",
+                  fontSize: 9, fontWeight: 700,
+                  color: styles.labelColor,
+                  textShadow: "none",
+                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
+                  maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis",
+                  display: "block",
+                }}>
+                  {`Deadline · ${bar.dueLabel}`}
+                </span>
+              )}
             </div>
           );
         })}
