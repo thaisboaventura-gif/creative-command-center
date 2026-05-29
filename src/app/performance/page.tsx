@@ -14,25 +14,25 @@ const JIRA_BASE      = "https://tiendanube.atlassian.net/browse";
 const LABEL_W_DEFAULT = 220; // px — task name column (default)
 const LABEL_W_KEY     = "perf_label_w_v1";
 
-interface ColorTokens {
+interface PaletteEntry {
   bg: string; text: string;
   subtle: string; subtleText: string;
   border: string;
 }
 
-const COLOR_ENTRIES: ColorTokens[] = [
-  { bg:"#80B0E8", text:"#1B3A5C", subtle:"rgba(128,176,232,0.25)", subtleText:"#1B3A5C", border:"#668DBA" }, // Airplane View
-  { bg:"#FFC0C0", text:"#7D2020", subtle:"rgba(255,192,192,0.25)", subtleText:"#7D2020", border:"#CC9A9A" }, // Peony Bundle
-  { bg:"#008471", text:"#FFFFFF", subtle:"rgba(0,132,113,0.25)",   subtleText:"#004A3F", border:"#006A5A" }, // Tropical Rain
-  { bg:"#D1CAEA", text:"#3D2D6B", subtle:"rgba(209,202,234,0.25)", subtleText:"#3D2D6B", border:"#A7A2BB" }, // Autumn Lavender
-  { bg:"#D6D35F", text:"#3A3808", subtle:"rgba(214,211,95,0.25)",  subtleText:"#3A3808", border:"#ABA94C" }, // Limeade
-  { bg:"#C45F3F", text:"#FFFFFF", subtle:"rgba(196,95,63,0.25)",   subtleText:"#6B2010", border:"#9D4C32" }, // Tomato Jam
-  { bg:"#F4D242", text:"#5C4200", subtle:"rgba(244,210,66,0.25)",  subtleText:"#5C4200", border:"#C3A835" }, // Pure Sun
-  { bg:"#898E46", text:"#1E2200", subtle:"rgba(137,142,70,0.25)",  subtleText:"#1E2200", border:"#6E7238" }, // Monet Ponds
-  { bg:"#F29CC3", text:"#6B1C42", subtle:"rgba(242,156,195,0.25)", subtleText:"#6B1C42", border:"#C27D9C" }, // Bubble Gum
+const PALETTE: PaletteEntry[] = [
+  { bg:'#80B0E8', text:'#1a3a5c', subtle:'rgba(128,176,232,0.25)', subtleText:'#1a3a5c', border:'#5a8fc7' },
+  { bg:'#008471', text:'#ffffff', subtle:'rgba(0,132,113,0.20)',   subtleText:'#005a4d', border:'#006057' },
+  { bg:'#D1CAEA', text:'#3b2d6e', subtle:'rgba(209,202,234,0.35)', subtleText:'#3b2d6e', border:'#9b90c9' },
+  { bg:'#F4D242', text:'#5c3d00', subtle:'rgba(244,210,66,0.25)',  subtleText:'#5c3d00', border:'#c9a800' },
+  { bg:'#C45F3F', text:'#ffffff', subtle:'rgba(196,95,63,0.20)',   subtleText:'#7a2e10', border:'#9a3e22' },
+  { bg:'#898E46', text:'#ffffff', subtle:'rgba(137,142,70,0.22)',  subtleText:'#3a3d10', border:'#5f6230' },
+  { bg:'#FFC0C0', text:'#7a1c1c', subtle:'rgba(255,192,192,0.35)', subtleText:'#7a1c1c', border:'#e07070' },
+  { bg:'#F29CC3', text:'#6b0a3a', subtle:'rgba(242,156,195,0.30)', subtleText:'#6b0a3a', border:'#c9609a' },
 ];
 
-const PROJECT_PALETTE = COLOR_ENTRIES.map((e) => e.bg);
+// PROJECT_PALETTE kept for projectColor() used by calcBar
+const PROJECT_PALETTE = PALETTE.map((e) => e.bg);
 
 const STATUS_LABEL: Record<string, string> = {
   done:        "✅ Entregue",
@@ -140,14 +140,7 @@ function projectColor(title: string): string {
   const key = projectKey(title);
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length].bg;
-}
-
-function projectColorEntry(title: string): ColorTokens {
-  const key = projectKey(title);
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length];
+  return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
 }
 
 /** Darkens a hex color by `factor` (0–1). factor=0.3 → 30% darker. */
@@ -799,9 +792,10 @@ export default function PerformanceDashboard() {
 
   /* ── TaskRow ── */
 
-  function TaskRow({ task, indent = false, onVertDragStart, isVertDragging }: {
+  function TaskRow({ task, indent = false, colorIdx = 0, onVertDragStart, isVertDragging }: {
     task: PerfTask | PerfSubtask;
     indent?: boolean;
+    colorIdx?: number;
     onVertDragStart?: (e: React.MouseEvent) => void;
     isVertDragging?: boolean;
   }) {
@@ -830,8 +824,8 @@ export default function PerformanceDashboard() {
       (task as PerfTask).assignee ?? (task as PerfSubtask).assignee,
     );
 
-    // ── Color system ─────────────────────────────────────────────────────────
-    const colorEntry = projectColorEntry(task.title);
+    // ── Color system — index-based palette ───────────────────────────────────
+    const colorTokens = PALETTE[colorIdx % PALETTE.length];
 
     interface BarStyles {
       barBg: string; barOpacity: number;
@@ -839,18 +833,30 @@ export default function PerformanceDashboard() {
       prefix: string | null;
     }
     const styles: BarStyles = (() => {
-      if (!bar)           return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#9ca3af", leftBorder:"#D1D5DB", prefix:null };
-      if (bar.isDone)     return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#4B5563", leftBorder:"#9CA3AF", prefix:"✅" };
-      if (bar.isWaiting)  return { barBg:colorEntry.subtle, barOpacity:1, labelColor: isParent ? colorEntry.text : colorEntry.subtleText, leftBorder:colorEntry.border, prefix:"⏳" };
+      if (!bar) return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#9ca3af", leftBorder:"#D1D5DB", prefix:null };
+
+      // Task mãe — sempre usa a cor da paleta, sem override de status
+      if (isParent) return {
+        barBg:      colorTokens.bg,
+        barOpacity: 1,
+        labelColor: colorTokens.text,
+        leftBorder: colorTokens.border,
+        prefix:     null,
+      };
+
+      // Subtask — estados especiais têm prioridade sobre a cor da paleta
+      if (bar.isDone)     return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#6B7280", leftBorder:"#9CA3AF", prefix:"✅" };
+      if (bar.isWaiting)  return { barBg:"#D1FAE5", barOpacity:1, labelColor:"#065F46", leftBorder:"#34D399", prefix:"⏳" };
       if (bar.isDueToday) return { barBg:"#FEF3C7", barOpacity:1, labelColor:"#92400E", leftBorder:"#F59E0B", prefix:"📅" };
       if (bar.overdue)    return { barBg:"#FEE2E2", barOpacity:1, labelColor:"#991B1B", leftBorder:"#EF4444", prefix:"⚠️" };
-      // Normal — parent sólido, subtask sutil
+
+      // Subtask normal — cor sutil da paleta, borda a 50% de opacidade
       return {
-        barBg:       isParent ? colorEntry.bg : colorEntry.subtle,
-        barOpacity:  1,
-        labelColor:  isParent ? colorEntry.text : colorEntry.subtleText,
-        leftBorder:  colorEntry.border,
-        prefix:      null,
+        barBg:      colorTokens.subtle,
+        barOpacity: 1,
+        labelColor: colorTokens.subtleText,
+        leftBorder: colorTokens.border + "80", // hex alpha = 50% opacity
+        prefix:     null,
       };
     })();
     // ─────────────────────────────────────────────────────────────────────────
@@ -1026,7 +1032,7 @@ export default function PerformanceDashboard() {
               style={{
                 position: "relative",
                 borderRight,
-                borderLeft: isExecStart ? `${isParent ? 4 : 2}px solid ${styles.leftBorder}` : undefined,
+                borderLeft: isExecStart ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
                 minHeight: isParent ? 32 : 28,
                 background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
                 overflow: "visible",
@@ -1037,7 +1043,7 @@ export default function PerformanceDashboard() {
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
-                  background: colorEntry.bg,
+                  background: colorTokens.bg,
                   opacity: 0.1,
                   borderRadius: pipeBarRadius,
                 }} />
@@ -1369,11 +1375,12 @@ export default function PerformanceDashboard() {
             >
               <TaskRow
                 task={task}
+                colorIdx={idx}
                 onVertDragStart={() => setPerfVertDrag({ taskKey: task.key, fromIdx: idx })}
                 isVertDragging={perfVertDrag?.taskKey === task.key}
               />
               {!collapsed.has(task.key) && task.subtasks.map((st) => (
-                <TaskRow key={st.key} task={st as unknown as PerfTask} indent />
+                <TaskRow key={st.key} task={st as unknown as PerfTask} indent colorIdx={idx} />
               ))}
             </div>
           ))}
