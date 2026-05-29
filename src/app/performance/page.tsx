@@ -1036,25 +1036,27 @@ export default function PerformanceDashboard() {
               style={{
                 position: "relative",
                 borderRight,
-                borderLeft: isExecStart ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
+                // Parent: borda no início do pipeline (primeiro cell do range), Subtask: no início do exec
+                borderLeft: (isParent ? (isStart && !bar?.startsBefore) : isExecStart)
+                  ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
                 minHeight: isWaitingDueCell ? 56 : isParent ? 32 : 28,
                 background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
                 overflow: "visible",
               }}
             >
-              {/* Pipeline phase — translucent bar (project color at 10%) */}
+              {/* Pipeline phase — task mãe: sólido (cor da paleta). Subtask: translúcido 10% */}
               {isPipeline && (
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
                   background: colorTokens.bg,
-                  opacity: 0.1,
+                  opacity: isParent ? 1 : 0.1,
                   borderRadius: pipeBarRadius,
                 }} />
               )}
 
-              {/* "No pipeline" label — only in the first pipeline cell */}
-              {isPipeStart && (
+              {/* "No pipeline" label — apenas subtasks (task mãe tem barra sólida) */}
+              {isPipeStart && !isParent && (
                 <span style={{
                   position: "absolute",
                   left: 4, top: "50%", transform: "translateY(-50%)",
