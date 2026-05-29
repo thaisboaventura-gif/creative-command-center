@@ -15,7 +15,7 @@ const LABEL_W_DEFAULT = 220; // px — task name column (default)
 const LABEL_W_KEY     = "perf_label_w_v1";
 
 const PROJECT_PALETTE = [
-  "#F266B3", "#2E4BA5", "#F2BD56", "#F3A54A", "#F25D5D",
+  "#93C5FD", "#F9A8D4", "#6EE7B7", "#FCD34D", "#C4B5FD", "#FCA5A5", "#67E8F9",
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -957,6 +957,8 @@ export default function PerformanceDashboard() {
                   left: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 8, fontWeight: 500, color: "#9ca3af",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none",
+                  maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis",
+                  display: "block",
                 }}>
                   No pipeline
                 </span>
@@ -1015,6 +1017,8 @@ export default function PerformanceDashboard() {
                   color: (bar!.overdue && !bar!.isWaiting) ? "#b91c1c" : "rgba(0,0,0,0.65)",
                   textShadow: "none",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
+                  maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis",
+                  display: "block",
                 }}>
                   {bar!.isWaiting && bar!.overdue
                     ? `✅⏳ Entregue · aguardando · ${bar!.dueLabel}`
