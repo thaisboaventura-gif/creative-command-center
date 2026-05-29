@@ -15,9 +15,7 @@ const LABEL_W_DEFAULT = 220; // px — task name column (default)
 const LABEL_W_KEY     = "perf_label_w_v1";
 
 const PROJECT_PALETTE = [
-  "#5b6cff", "#6dd49e", "#ee8094", "#fb923c",
-  "#a78bfa", "#2dd4bf", "#38bdf8", "#facc15",
-  "#f472b6", "#84cc16",
+  "#F266B3", "#2E4BA5", "#F2BD56", "#F3A54A", "#F25D5D",
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -211,11 +209,12 @@ function calcBar(
   const isDone     = status === "done";
   const isWaiting  = status === "in_review";
   const overdue    = !isDone && due < now;
-  const isDueToday = !isDone && due.getTime() === now.getTime();
-  const color      = isDone     ? "#9ca3af"
-                   : overdue    ? "#fecaca"
-                   : isWaiting  ? "#fbcfe8"
-                   : isDueToday ? "#fbbf24"
+  const isDueToday = !isDone && !isWaiting && due.getTime() === now.getTime();
+  // isWaiting always takes priority — the team delivered, waiting on feedback
+  const color      = isDone               ? "#9ca3af"
+                   : isWaiting            ? "#d1fae5"
+                   : isDueToday           ? "#fbbf24"
+                   : overdue              ? "#ef4444"
                    : projectColor(title);
 
   const dueLabel = `${due.getDate()}/${due.getMonth() + 1}`;
@@ -1013,11 +1012,15 @@ export default function PerformanceDashboard() {
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
-                  color: bar!.overdue ? "#b91c1c" : "rgba(255,255,255,0.95)",
-                  textShadow: bar!.overdue ? "none" : "0 1px 2px rgba(0,0,0,.35)",
+                  color: (bar!.overdue && !bar!.isWaiting) ? "#b91c1c" : "rgba(0,0,0,0.65)",
+                  textShadow: "none",
                   whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
                 }}>
-                  {bar!.overdue ? `⚠️ Em atraso · ${bar!.dueLabel}` : `Deadline: ${bar!.dueLabel}`}
+                  {bar!.isWaiting && bar!.overdue
+                    ? `✅⏳ Entregue · aguardando · ${bar!.dueLabel}`
+                    : bar!.overdue
+                    ? `⚠️ Em atraso · ${bar!.dueLabel}`
+                    : `Deadline: ${bar!.dueLabel}`}
                 </span>
               )}
 

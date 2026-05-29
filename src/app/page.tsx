@@ -127,16 +127,11 @@ function extractProject(title: string): string {
 }
 
 const PROJECT_PALETTE = [
-  "#5b6cff", // blue
-  "#6dd49e", // green
-  "#ee8094", // pink
-  "#fb923c", // orange
-  "#a78bfa", // purple
-  "#2dd4bf", // teal
-  "#38bdf8", // cyan
-  "#facc15", // yellow
-  "#f472b6", // rose
-  "#84cc16", // lime
+  "#F266B3", // pink
+  "#2E4BA5", // navy
+  "#F2BD56", // gold
+  "#F3A54A", // orange
+  "#F25D5D", // coral
 ];
 
 function projectColor(project: string): string {
