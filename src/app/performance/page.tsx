@@ -14,14 +14,25 @@ const JIRA_BASE      = "https://tiendanube.atlassian.net/browse";
 const LABEL_W_DEFAULT = 220; // px — task name column (default)
 const LABEL_W_KEY     = "perf_label_w_v1";
 
-const PROJECT_PALETTE = [
-  "#5B8DEF", // azul médio
-  "#E8715A", // coral/terracota
-  "#63B38A", // verde médio
-  "#C67BC4", // lilás médio
-  "#E8A93A", // âmbar médio
-  "#5BC4C4", // teal médio
+interface ColorTokens {
+  bg: string; text: string;
+  subtle: string; subtleText: string;
+  border: string;
+}
+
+const COLOR_ENTRIES: ColorTokens[] = [
+  { bg:"#80B0E8", text:"#1B3A5C", subtle:"rgba(128,176,232,0.25)", subtleText:"#1B3A5C", border:"#668DBA" }, // Airplane View
+  { bg:"#FFC0C0", text:"#7D2020", subtle:"rgba(255,192,192,0.25)", subtleText:"#7D2020", border:"#CC9A9A" }, // Peony Bundle
+  { bg:"#008471", text:"#FFFFFF", subtle:"rgba(0,132,113,0.25)",   subtleText:"#004A3F", border:"#006A5A" }, // Tropical Rain
+  { bg:"#D1CAEA", text:"#3D2D6B", subtle:"rgba(209,202,234,0.25)", subtleText:"#3D2D6B", border:"#A7A2BB" }, // Autumn Lavender
+  { bg:"#D6D35F", text:"#3A3808", subtle:"rgba(214,211,95,0.25)",  subtleText:"#3A3808", border:"#ABA94C" }, // Limeade
+  { bg:"#C45F3F", text:"#FFFFFF", subtle:"rgba(196,95,63,0.25)",   subtleText:"#6B2010", border:"#9D4C32" }, // Tomato Jam
+  { bg:"#F4D242", text:"#5C4200", subtle:"rgba(244,210,66,0.25)",  subtleText:"#5C4200", border:"#C3A835" }, // Pure Sun
+  { bg:"#898E46", text:"#1E2200", subtle:"rgba(137,142,70,0.25)",  subtleText:"#1E2200", border:"#6E7238" }, // Monet Ponds
+  { bg:"#F29CC3", text:"#6B1C42", subtle:"rgba(242,156,195,0.25)", subtleText:"#6B1C42", border:"#C27D9C" }, // Bubble Gum
 ];
+
+const PROJECT_PALETTE = COLOR_ENTRIES.map((e) => e.bg);
 
 const STATUS_LABEL: Record<string, string> = {
   done:        "✅ Entregue",
@@ -121,11 +132,22 @@ function subWorkDays(date: Date, n: number): Date {
   return r;
 }
 
+function projectKey(title: string): string {
+  return title.split("|")[0].split("—")[0].trim().split(" ").slice(0, 3).join(" ");
+}
+
 function projectColor(title: string): string {
-  const project = title.split("|")[0].split("—")[0].trim().split(" ").slice(0, 3).join(" ");
+  const key = projectKey(title);
   let hash = 0;
-  for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
-  return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length].bg;
+}
+
+function projectColorEntry(title: string): ColorTokens {
+  const key = projectKey(title);
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length];
 }
 
 /** Darkens a hex color by `factor` (0–1). factor=0.3 → 30% darker. */
@@ -808,9 +830,8 @@ export default function PerformanceDashboard() {
       (task as PerfTask).assignee ?? (task as PerfSubtask).assignee,
     );
 
-    // ── New style system ──────────────────────────────────────────────────────
-    // Project color is always the base; status + parent/subtask determines display
-    const projectCol = bar?.color ?? "#9ca3af";
+    // ── Color system ─────────────────────────────────────────────────────────
+    const colorEntry = projectColorEntry(task.title);
 
     interface BarStyles {
       barBg: string; barOpacity: number;
@@ -818,18 +839,18 @@ export default function PerformanceDashboard() {
       prefix: string | null;
     }
     const styles: BarStyles = (() => {
-      if (!bar)              return { barBg: "#F3F4F6", barOpacity: 1, labelColor: "#9ca3af", leftBorder: "#D1D5DB", prefix: null };
-      if (bar.isDone)        return { barBg: "#F3F4F6", barOpacity: 1, labelColor: "#6B7280", leftBorder: "#D1D5DB", prefix: "✅" };
-      if (bar.isWaiting)     return { barBg: projectCol, barOpacity: 0.4, labelColor: isParent ? darkenHex(projectCol, 0.4) : projectCol, leftBorder: projectCol, prefix: "⏳" };
-      if (bar.isDueToday)    return { barBg: "#FEF3C7", barOpacity: 1, labelColor: "#92400E", leftBorder: "#F59E0B", prefix: "📅" };
-      if (bar.overdue)       return { barBg: "#FEE2E2", barOpacity: 1, labelColor: "#991B1B", leftBorder: "#EF4444", prefix: "⚠️" };
-      // Normal — parent solid, subtask 40% opacity
+      if (!bar)           return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#9ca3af", leftBorder:"#D1D5DB", prefix:null };
+      if (bar.isDone)     return { barBg:"#F3F4F6", barOpacity:1, labelColor:"#4B5563", leftBorder:"#9CA3AF", prefix:"✅" };
+      if (bar.isWaiting)  return { barBg:colorEntry.subtle, barOpacity:1, labelColor: isParent ? colorEntry.text : colorEntry.subtleText, leftBorder:colorEntry.border, prefix:"⏳" };
+      if (bar.isDueToday) return { barBg:"#FEF3C7", barOpacity:1, labelColor:"#92400E", leftBorder:"#F59E0B", prefix:"📅" };
+      if (bar.overdue)    return { barBg:"#FEE2E2", barOpacity:1, labelColor:"#991B1B", leftBorder:"#EF4444", prefix:"⚠️" };
+      // Normal — parent sólido, subtask sutil
       return {
-        barBg: projectCol,
-        barOpacity: isParent ? 1 : 0.4,
-        labelColor: isParent ? "white" : darkenHex(projectCol, 0.35),
-        leftBorder: darkenHex(projectCol, 0.3),
-        prefix: null,
+        barBg:       isParent ? colorEntry.bg : colorEntry.subtle,
+        barOpacity:  1,
+        labelColor:  isParent ? colorEntry.text : colorEntry.subtleText,
+        leftBorder:  colorEntry.border,
+        prefix:      null,
       };
     })();
     // ─────────────────────────────────────────────────────────────────────────
@@ -1012,7 +1033,7 @@ export default function PerformanceDashboard() {
                 <div style={{
                   position: "absolute",
                   top: 5, bottom: 5, left: 0, right: 0,
-                  background: projectCol,
+                  background: colorEntry.bg,
                   opacity: 0.1,
                   borderRadius: pipeBarRadius,
                 }} />

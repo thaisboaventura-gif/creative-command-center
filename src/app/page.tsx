@@ -126,21 +126,36 @@ function extractProject(title: string): string {
   return cleaned.split(" ").slice(0, 3).join(" ");
 }
 
-const PROJECT_PALETTE = [
-  "#5B8DEF", // azul médio
-  "#E8715A", // coral/terracota
-  "#63B38A", // verde médio
-  "#C67BC4", // lilás médio
-  "#E8A93A", // âmbar médio
-  "#5BC4C4", // teal médio
+interface ColorTokens {
+  bg: string; text: string;
+  subtle: string; subtleText: string;
+  border: string;
+}
+
+const COLOR_ENTRIES: ColorTokens[] = [
+  { bg:"#80B0E8", text:"#1B3A5C", subtle:"rgba(128,176,232,0.25)", subtleText:"#1B3A5C", border:"#668DBA" }, // Airplane View
+  { bg:"#FFC0C0", text:"#7D2020", subtle:"rgba(255,192,192,0.25)", subtleText:"#7D2020", border:"#CC9A9A" }, // Peony Bundle
+  { bg:"#008471", text:"#FFFFFF", subtle:"rgba(0,132,113,0.25)",   subtleText:"#004A3F", border:"#006A5A" }, // Tropical Rain
+  { bg:"#D1CAEA", text:"#3D2D6B", subtle:"rgba(209,202,234,0.25)", subtleText:"#3D2D6B", border:"#A7A2BB" }, // Autumn Lavender
+  { bg:"#D6D35F", text:"#3A3808", subtle:"rgba(214,211,95,0.25)",  subtleText:"#3A3808", border:"#ABA94C" }, // Limeade
+  { bg:"#C45F3F", text:"#FFFFFF", subtle:"rgba(196,95,63,0.25)",   subtleText:"#6B2010", border:"#9D4C32" }, // Tomato Jam
+  { bg:"#F4D242", text:"#5C4200", subtle:"rgba(244,210,66,0.25)",  subtleText:"#5C4200", border:"#C3A835" }, // Pure Sun
+  { bg:"#898E46", text:"#1E2200", subtle:"rgba(137,142,70,0.25)",  subtleText:"#1E2200", border:"#6E7238" }, // Monet Ponds
+  { bg:"#F29CC3", text:"#6B1C42", subtle:"rgba(242,156,195,0.25)", subtleText:"#6B1C42", border:"#C27D9C" }, // Bubble Gum
 ];
+
+const PROJECT_PALETTE = COLOR_ENTRIES.map((e) => e.bg);
 
 function projectColor(project: string): string {
   let hash = 0;
-  for (let i = 0; i < project.length; i++) {
-    hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
-  }
-  return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
+  for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
+  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length].bg;
+}
+
+function projectColorEntry(project: string): ColorTokens {
+  let hash = 0;
+  for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
+  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length];
 }
 
 function dayIndex(d: Date, days: Date[]): number {
@@ -813,16 +828,17 @@ export default function Dashboard() {
                     const _due = bar.task.dueDate ? parseLocalDate(bar.task.dueDate) : null;
                     const isDueToday = !!_due && _due.getTime() === _today.getTime();
 
-                    const barBg = bar.isDone
-                      ? "#9ca3af"
-                      : isWaiting
-                      ? "#d1fae5"
-                      : bar.overdue
-                      ? "#ef4444"
-                      : isDueToday
-                      ? "#fbbf24"
-                      : bar.color;
-                    const textColor = isWaiting && !bar.isDone && !bar.overdue ? "#065f46" : "white";
+                    const colorEntry  = projectColorEntry(bar.project);
+                    const barBg = bar.isDone    ? "#F3F4F6"
+                      : bar.overdue             ? "#FEE2E2"
+                      : isDueToday              ? "#FEF3C7"
+                      : isWaiting               ? colorEntry.subtle
+                      : bar.color; // project bg
+                    const textColor = bar.isDone    ? "#4B5563"
+                      : bar.overdue             ? "#991B1B"
+                      : isDueToday              ? "#92400E"
+                      : isWaiting               ? colorEntry.subtleText
+                      : colorEntry.text;
                     const barLabel = bar.isDone
                       ? `✅ ${bar.task.title}`
                       : isWaiting && bar.overdue
@@ -897,7 +913,7 @@ export default function Dashboard() {
                         >
                           <div style={{ display: "flex", flexDirection: "column", gap: 2.5, pointerEvents: "none" }}>
                             {[0,1,2].map(i => (
-                              <div key={i} style={{ width: 8, height: 1.5, background: "rgba(255,255,255,0.5)", borderRadius: 1 }} />
+                              <div key={i} style={{ width: 8, height: 1.5, background: `${textColor}60`, borderRadius: 1 }} />
                             ))}
                           </div>
                         </div>
