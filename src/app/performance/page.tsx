@@ -875,7 +875,7 @@ export default function PerformanceDashboard() {
     const dispEndCol     = bar ? Math.max(1, Math.min(days.length, bar.endCol        + previewOffset)) : null;
     const dispExecCol    = bar ? Math.max(1, Math.min(days.length, bar.execStartCol  + previewOffset)) : null;
 
-    // Subtask: column index where resolvedAt falls (for 📦 placement)
+    // Subtask: column index where resolvedAt falls
     const subResolvedAtCol: number | null = !isParent
       ? (() => {
           const ra = (task as PerfSubtask).resolvedAt;
@@ -888,6 +888,25 @@ export default function PerformanceDashboard() {
           return null;
         })()
       : null;
+
+    // Correção 2: parent ✅ on the day ALL subtasks are done (latest completion date)
+    const allDoneCol: number | null = (() => {
+      if (!isParent || subtasks.length === 0) return null;
+      if (!subtasks.every((st) => st.status === "done")) return null;
+      let latest: Date | null = null;
+      for (const st of subtasks) {
+        const dateStr = st.resolvedAt ?? st.dueDate;
+        if (!dateStr) continue;
+        const d = parseLocalDate(dateStr); d.setHours(0, 0, 0, 0);
+        if (!latest || d > latest) latest = d;
+      }
+      if (!latest) return null;
+      for (let j = 0; j < days.length; j++) {
+        const dj = new Date(days[j]); dj.setHours(0, 0, 0, 0);
+        if (dj.getTime() === latest.getTime()) return j + 1;
+      }
+      return null;
+    })();
 
     return (
       <div
@@ -1001,10 +1020,8 @@ export default function PerformanceDashboard() {
           const isTodayOrPast = d <= today;
 
           const subEmoji: string | null = !isParent && bar ? (() => {
-            // 📦 no dia da entrega real (resolvedAt) ou no due date como fallback
-            if (isResolvedCell && bar.isDone) return "📦";
-            if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦";
-            // 📦⏳ handled separately as double-height cell — no emoji here
+            // 📦 removido — o label "✅ Entregue · DD/M" já cobre o estado done
+            // 📦⏳ handled separately as waiting-feedback cell
             // ❗ / ❗💬 apenas nos dias APÓS o deadline E que já passaram (≤ hoje)
             if (isAfterDue && isSubOverdue && isTodayOrPast) return hasComment ? "❗💬" : "❗";
             return null;
@@ -1117,6 +1134,19 @@ export default function PerformanceDashboard() {
                   whiteSpace: "nowrap",
                 }}>
                   {subEmoji}
+                </span>
+              )}
+
+              {/* Correção 2: ✅ on parent row when ALL subtasks are done */}
+              {isParent && allDoneCol !== null && cellN === allDoneCol && (
+                <span style={{
+                  position: "absolute",
+                  top: "50%", left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  fontSize: 14, lineHeight: 1,
+                  zIndex: 3, pointerEvents: "none", userSelect: "none",
+                }}>
+                  ✅
                 </span>
               )}
 
