@@ -220,6 +220,7 @@ export async function GET() {
         estimatedHours: number;
         estimatedDetail: string;
         createdAt: string;
+        parentKey?: string;
         }>;
       }
     >();
@@ -248,6 +249,7 @@ export async function GET() {
         estimatedHours: est.hours,
         estimatedDetail: est.detail,
         createdAt: issue.fields.created?.split("T")[0] || "",
+        parentKey: (issue.fields.parent as { key: string } | null)?.key ?? undefined,
       });
     }
 
@@ -283,8 +285,35 @@ export async function GET() {
           estimatedHours: est.hours,
           estimatedDetail: est.detail,
           createdAt: issue.fields.created?.split("T")[0] || "",
+          parentKey: (issue.fields.parent as { key: string } | null)?.key ?? undefined,
         });
       }
+    }
+
+    // Add subtasks from teamSubs into each member's task list (for hierarchy rendering)
+    // Only add if: subtask not already present, parent IS in the member's list, país=Brasil
+    const existingTaskKeys = new Set(
+      [...teamMap.values()].flatMap((m) => m.tasks.map((t) => t.key))
+    );
+    for (const sub of teamSubs) {
+      const parentKey = (sub.fields.parent as { key: string } | null)?.key;
+      const name = sub.fields.assignee?.displayName;
+      if (!name || !parentKey) continue;
+      if (!teamMap.has(name)) continue;
+      if (existingTaskKeys.has(sub.key)) continue;
+      if (!isBrasil(sub)) continue;
+      const member = teamMap.get(name)!;
+      if (!member.tasks.some((t) => t.key === parentKey)) continue; // only if parent is visible
+      const est = estimateHours(sub.fields.summary, sub.fields.timeoriginalestimate);
+      member.tasks.push({
+        id: sub.key, key: sub.key, title: sub.fields.summary,
+        status: mapStatus(sub.fields.status?.name || ""),
+        priority: mapPriority(sub.fields.priority?.name || "Medium"),
+        assignee: name, dueDate: sub.fields.duedate || null,
+        estimatedHours: est.hours, estimatedDetail: est.detail,
+        createdAt: sub.fields.created?.split("T")[0] || "",
+        parentKey,
+      });
     }
 
     // Unassigned tasks created by Thais → virtual "Sem dono" row

@@ -13,6 +13,7 @@ interface TaskItem {
   estimatedHours: number;
   estimatedDetail: string;
   createdAt: string;
+  parentKey?: string;
 }
 
 interface IncomingItem {
@@ -126,36 +127,29 @@ function extractProject(title: string): string {
   return cleaned.split(" ").slice(0, 3).join(" ");
 }
 
-interface ColorTokens {
-  bg: string; text: string;
-  subtle: string; subtleText: string;
-  border: string;
-}
+interface PaletteEntry { bg: string; text: string; border: string; }
 
-const COLOR_ENTRIES: ColorTokens[] = [
-  { bg:"#80B0E8", text:"#1B3A5C", subtle:"rgba(128,176,232,0.25)", subtleText:"#1B3A5C", border:"#668DBA" }, // Airplane View
-  { bg:"#FFC0C0", text:"#7D2020", subtle:"rgba(255,192,192,0.25)", subtleText:"#7D2020", border:"#CC9A9A" }, // Peony Bundle
-  { bg:"#008471", text:"#FFFFFF", subtle:"rgba(0,132,113,0.25)",   subtleText:"#004A3F", border:"#006A5A" }, // Tropical Rain
-  { bg:"#D1CAEA", text:"#3D2D6B", subtle:"rgba(209,202,234,0.25)", subtleText:"#3D2D6B", border:"#A7A2BB" }, // Autumn Lavender
-  { bg:"#D6D35F", text:"#3A3808", subtle:"rgba(214,211,95,0.25)",  subtleText:"#3A3808", border:"#ABA94C" }, // Limeade
-  { bg:"#C45F3F", text:"#FFFFFF", subtle:"rgba(196,95,63,0.25)",   subtleText:"#6B2010", border:"#9D4C32" }, // Tomato Jam
-  { bg:"#F4D242", text:"#5C4200", subtle:"rgba(244,210,66,0.25)",  subtleText:"#5C4200", border:"#C3A835" }, // Pure Sun
-  { bg:"#898E46", text:"#1E2200", subtle:"rgba(137,142,70,0.25)",  subtleText:"#1E2200", border:"#6E7238" }, // Monet Ponds
-  { bg:"#F29CC3", text:"#6B1C42", subtle:"rgba(242,156,195,0.25)", subtleText:"#6B1C42", border:"#C27D9C" }, // Bubble Gum
+const PALETTE: PaletteEntry[] = [
+  { bg: '#80B0E8', text: '#1a3a5c', border: '#5a8fc7' },
+  { bg: '#008471', text: '#ffffff', border: '#006057' },
+  { bg: '#D1CAEA', text: '#3b2d6e', border: '#9b90c9' },
+  { bg: '#F4D242', text: '#5c3d00', border: '#c9a800' },
+  { bg: '#C45F3F', text: '#ffffff', border: '#9a3e22' },
+  { bg: '#898E46', text: '#ffffff', border: '#5f6230' },
+  { bg: '#FFC0C0', text: '#7a1c1c', border: '#e07070' },
+  { bg: '#F29CC3', text: '#6b0a3a', border: '#c9609a' },
 ];
 
-const PROJECT_PALETTE = COLOR_ENTRIES.map((e) => e.bg);
+function hexToRgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
+}
 
+// Keep projectColor for layoutBars backward compatibility
 function projectColor(project: string): string {
   let hash = 0;
   for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
-  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length].bg;
-}
-
-function projectColorEntry(project: string): ColorTokens {
-  let hash = 0;
-  for (let i = 0; i < project.length; i++) hash = (hash * 31 + project.charCodeAt(i)) >>> 0;
-  return COLOR_ENTRIES[hash % COLOR_ENTRIES.length];
+  return PALETTE[hash % PALETTE.length].bg;
 }
 
 function dayIndex(d: Date, days: Date[]): number {
@@ -262,6 +256,7 @@ export default function Dashboard() {
 
   // ── Drag-resize state ──
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
+  const [mainCollapsed, setMainCollapsed] = useState<Set<string>>(new Set());
   // ── Vertical reorder state ──
   const [taskOrders, setTaskOrders] = useState<Record<string, string[]>>({});
   const [vertDrag, setVertDrag] = useState<{ memberName: string; taskId: string; fromIdx: number } | null>(null);
@@ -330,6 +325,11 @@ export default function Dashboard() {
       }
     }
     if (Object.keys(orders).length > 0) setTaskOrders(orders);
+
+    try {
+      const raw = localStorage.getItem("main_collapsed_v1");
+      if (raw) setMainCollapsed(new Set(JSON.parse(raw)));
+    } catch { /* ignore */ }
   }, []);
 
   // Global drag mouse events
@@ -456,6 +456,15 @@ export default function Dashboard() {
     };
   }, [vertDrag]);
 
+  function toggleMainCollapsed(key: string) {
+    setMainCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try { localStorage.setItem("main_collapsed_v1", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
+
   async function confirmDeadline() {
     if (!pendingModal) return;
     // Push undo before API call
@@ -543,22 +552,30 @@ export default function Dashboard() {
   });
 
   const rows = sorted.map((m) => {
-    const cfg    = getConfig(m.name);
-    const active = m.tasks.filter((t) => t.status !== "done");
-    // Apply saved vertical order
-    const customOrder = taskOrders[m.name] || [];
-    const orderedActive = customOrder.length > 0
-      ? [
-          ...customOrder.map(id => active.find(t => t.id === id)).filter(Boolean) as TaskItem[],
-          ...active.filter(t => !customOrder.includes(t.id)),
-        ]
-      : active;
-    const bars    = layoutBars(orderedActive, days, startOverrides);
-    const lanes   = bars.length; // one per line
-    const backlog = active.filter((t) => !t.dueDate).length;
-    return { member: m, cfg, bars, lanes, backlog };
+    const cfg = getConfig(m.name);
+    const areaC = AREA_COLORS[cfg.area] || "#6b7280";
+
+    // Build parent-child map
+    const taskMap = new Map(m.tasks.map(t => [t.key, t]));
+    const parentTasks = m.tasks.filter(t => !t.parentKey || !taskMap.has(t.parentKey));
+    const childMap = new Map<string, TaskItem[]>();
+    m.tasks.filter(t => t.parentKey && taskMap.has(t.parentKey)).forEach(t => {
+      const arr = childMap.get(t.parentKey!) ?? [];
+      arr.push(t);
+      childMap.set(t.parentKey!, arr);
+    });
+
+    // Apply custom order to parent tasks
+    const customOrder = taskOrders[m.name] ?? [];
+    const orderedParents = customOrder.length > 0
+      ? [...customOrder.map(id => parentTasks.find(t => t.id === id)).filter(Boolean) as TaskItem[],
+         ...parentTasks.filter(t => !customOrder.includes(t.id))]
+      : parentTasks;
+
+    const backlog = m.tasks.filter(t => !t.dueDate && t.status !== "done").length;
+    return { member: m, cfg, areaC, orderedParents, childMap, backlog };
   });
-  rowsRef.current = rows.map(r => ({ member: r.member, bars: r.bars }));
+  rowsRef.current = []; // reset (vertical reorder refs no longer needed in new layout)
 
   if (src === "loading") return <Shell><p style={{ color: "#9ca3af", textAlign: "center", padding: 80 }}>Conectando ao Jira...</p></Shell>;
   if (src === "err") return <Shell><p style={{ color: "#dc2626", textAlign: "center", padding: 80 }}>Erro ao conectar. Recarregue.</p></Shell>;
@@ -702,288 +719,314 @@ export default function Dashboard() {
           <div style={{ minWidth: 680 }}>
 
           {/* Member rows */}
-          {rows.map(({ member, cfg, bars, lanes, backlog }) => {
-            const areaC = AREA_COLORS[cfg.area] || "#6b7280";
-            const rowHeight = Math.max(76, 28 + lanes * 32);
+          {rows.map(({ member, cfg, areaC, orderedParents, childMap, backlog }) => {
+  return (
+    <div key={member.name}>
+      {/* ── Person header ── */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+        borderBottom: "2px solid #e5e7eb",
+        background: "#f9fafb", minHeight: 40,
+      }}>
+        <div style={{ padding: "6px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: "50%",
+            background: areaC, color: "white",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 11, fontWeight: 700, flexShrink: 0,
+          }}>{member.avatar}</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#111", lineHeight: 1.2 }}>{firstName(member.name)}</div>
+            <div style={{ fontSize: 10, color: "#9ca3af" }}>{cfg.role}</div>
+            {backlog > 0 && <div style={{ fontSize: 9, color: "#d1d5db" }}>+{backlog} sem prazo</div>}
+          </div>
+        </div>
+        {days.map((d, i) => {
+          const isT = sameDay(d, today);
+          const isMonday = d.getDay() === 1 && i > 0;
+          return (
+            <div key={i} style={{
+              borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+              background: isT ? "#f0edff" : "transparent",
+            }} />
+          );
+        })}
+      </div>
 
-            return (
-              <div
-                key={member.name}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "180px repeat(5, 1fr)",
-                  borderBottom: "1px solid #f3f4f6",
-                  minHeight: rowHeight,
-                }}
-              >
-                {/* Name cell */}
-                <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    background: areaC,
-                    color: "white",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    flexShrink: 0,
+      {/* ── Task hierarchy ── */}
+      {orderedParents.map((parent, pIdx) => {
+        const ct = PALETTE[pIdx % PALETTE.length];
+        const parentBars = layoutBars([parent], days, startOverrides);
+        const parentBar = parentBars[0] ?? null;
+        const children = childMap.get(parent.key) ?? [];
+        const isCollapsed = mainCollapsed.has(parent.key);
+
+        // Parent bar display
+        let parentStartIdx = parentBar ? parentBar.startCol - 1 : -1;
+        let parentEndIdx   = parentBar ? parentBar.endCol   - 1 : -1;
+        const isBeingDraggedParent = dragPreview?.key === parent.id;
+        if (isBeingDraggedParent && dragState?.handle === "left") parentStartIdx = Math.min(dragPreview!.col, parentBar!.endCol) - 1;
+        if (isBeingDraggedParent && dragState?.handle === "right") parentEndIdx = Math.max(dragPreview!.col, parentBar!.startCol) - 1;
+        const parentLeftPct  = parentBar ? (parentStartIdx / 5) * 100 : 0;
+        const parentWidthPct = parentBar ? ((parentEndIdx - parentStartIdx + 1) / 5) * 100 : 0;
+
+        // All subs done → find latest delivery date column
+        const allSubsDone = children.length > 0 && children.every(c => c.status === "done");
+        const allDoneColIdx: number | null = (() => {
+          if (!allSubsDone) return null;
+          let latest: Date | null = null;
+          for (const c of children) {
+            const ds = c.dueDate;
+            if (!ds) continue;
+            const d = parseLocalDate(ds); d.setHours(0,0,0,0);
+            if (!latest || d > latest) latest = d;
+          }
+          if (!latest) return null;
+          for (let j = 0; j < days.length; j++) {
+            const dj = new Date(days[j]); dj.setHours(0,0,0,0);
+            if (dj.getTime() === latest.getTime()) return j;
+          }
+          return null;
+        })();
+
+        // suppress unused warning
+        void parentLeftPct; void parentWidthPct;
+
+        return (
+          <div key={parent.key}>
+            {/* Parent task row */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+              borderBottom: "1px solid #e9ecef",
+              minHeight: 32,
+              background: hexToRgba(ct.bg, 0.15),
+            }}>
+              {/* Label cell */}
+              <div style={{
+                padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`,
+                display: "flex", alignItems: "center", gap: 4, minWidth: 0,
+              }}>
+                {children.length > 0 && (
+                  <button onClick={() => toggleMainCollapsed(parent.key)}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      color: "#9ca3af", fontSize: 8, padding: "1px 2px", flexShrink: 0, lineHeight: 1 }}>
+                    {isCollapsed ? "▶" : "▼"}
+                  </button>
+                )}
+                <a href={`${JIRA}/${parent.key}`} target="_blank" rel="noopener noreferrer"
+                  style={{
+                    fontSize: 11, fontWeight: 700, color: ct.text,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    flex: 1, textDecoration: "none",
+                    background: hexToRgba(ct.bg, 0.0),
+                  }}
+                  title={parent.title}>
+                  {parent.title}
+                </a>
+              </div>
+
+              {/* Day cells */}
+              {days.map((d, i) => {
+                const isT = sameDay(d, today);
+                const isMonday = d.getDay() === 1 && i > 0;
+                const cellN = i + 1;
+                const inParentRange = parentBar && cellN >= parentBar.startCol && cellN <= parentBar.endCol;
+                const isDueCell = parentBar && cellN === parentBar.endCol && inParentRange;
+                const isDeadlineCell = isDueCell && !allSubsDone;
+                const isAllDoneCell = allDoneColIdx !== null && i === allDoneColIdx;
+
+                return (
+                  <div key={i} style={{
+                    position: "relative",
+                    borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+                    minHeight: 32,
+                    background: isT && !inParentRange ? "#f5f3ff" : "transparent",
                   }}>
-                    {member.avatar}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#111", lineHeight: 1.2 }}>
-                      {firstName(member.name)}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>
-                      {cfg.role}
-                    </div>
-                    {backlog > 0 && (
-                      <div style={{ fontSize: 9, color: "#d1d5db", marginTop: 2 }}>
-                        +{backlog} sem prazo
-                      </div>
+                    {/* Parent bar */}
+                    {inParentRange && (
+                      <div
+                        onMouseDown={(e) => {
+                          if (e.button !== 0 || parentBar.isDone) return;
+                          e.preventDefault();
+                          setDragState({ key: parent.id, handle: cellN === parentBar.startCol ? "left" : "right", startX: e.clientX, initialCol: cellN === parentBar.startCol ? parentBar.startCol : parentBar.endCol });
+                        }}
+                        style={{
+                          position: "absolute", top: 4, bottom: 4, left: 0, right: 0,
+                          background: ct.bg,
+                          borderRadius: (cellN === parentBar.startCol && !parentBar.startsBefore) && cellN === parentBar.endCol ? "4px"
+                            : (cellN === parentBar.startCol && !parentBar.startsBefore) ? "4px 0 0 4px"
+                            : cellN === parentBar.endCol ? "0 4px 4px 0" : "0",
+                          opacity: parentBar.isDone ? 0.5 : 1,
+                          cursor: parentBar.isDone ? "default" : "grab",
+                        }}
+                      />
+                    )}
+                    {/* Deadline label */}
+                    {isDeadlineCell && parentBar && (
+                      <span style={{
+                        position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                        fontSize: 9, fontWeight: 700, color: ct.text,
+                        whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none",
+                        maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis", display: "block",
+                      }}>
+                        {`Deadline · ${parseLocalDate(parent.dueDate!).getDate()}/${parseLocalDate(parent.dueDate!).getMonth()+1}`}
+                      </span>
+                    )}
+                    {/* ✅ when all subtasks done */}
+                    {isAllDoneCell && (
+                      <span style={{
+                        position: "absolute", top: "50%", left: "50%",
+                        transform: "translate(-50%,-50%)",
+                        fontSize: 14, zIndex: 2, pointerEvents: "none",
+                      }}>✅</span>
                     )}
                   </div>
-                </div>
+                );
+              })}
+            </div>
 
-                {/* Bar zone — relative container spanning 5 columns */}
-                <div
-                  ref={(el) => {
-                    if (el) barZoneRefs.current.set(member.name, el);
-                    else barZoneRefs.current.delete(member.name);
-                    if (!barZoneRef.current && el) barZoneRef.current = el;
-                  }}
-                  style={{ gridColumn: "2 / 7", position: "relative", padding: "10px 0" }}
-                >
-                  {/* Vertical drop indicator */}
-                  {vertDropIdx?.memberName === member.name && (
-                    <div style={{
-                      position: "absolute", left: 0, right: 0, zIndex: 20,
-                      top: vertDropIdx.idx * 32 + 8 - 2,
-                      height: 2, background: "#7c3aed", borderRadius: 1,
-                      pointerEvents: "none",
-                    }} />
-                  )}
-                  {/* Vertical day separators */}
+            {/* Subtask rows */}
+            {!isCollapsed && children.map((sub) => {
+              const subBars = layoutBars([sub], days, startOverrides);
+              const subBar = subBars[0] ?? null;
+              const isBeingDraggedSub = dragPreview?.key === sub.id;
+              let subStartIdx = subBar ? subBar.startCol - 1 : -1;
+              let subEndIdx   = subBar ? subBar.endCol   - 1 : -1;
+              if (isBeingDraggedSub && dragState?.handle === "left") subStartIdx = Math.min(dragPreview!.col, subBar!.endCol) - 1;
+              if (isBeingDraggedSub && dragState?.handle === "right") subEndIdx = Math.max(dragPreview!.col, subBar!.startCol) - 1;
+
+              // suppress unused warning
+              void subStartIdx; void subEndIdx;
+
+              const isWaiting = sub.status === "in_review";
+              const _today2 = new Date(); _today2.setHours(0,0,0,0);
+              const _subDue = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
+              const subIsDueToday = !!_subDue && _subDue.getTime() === _today2.getTime();
+
+              const subBg = sub.status === "done" ? "#F3F4F6"
+                : isWaiting ? "#D1FAE5"
+                : subBar?.overdue ? "#FEE2E2"
+                : subIsDueToday ? "#FEF3C7"
+                : hexToRgba(ct.bg, 0.22);
+              const subBorder = sub.status === "done" ? "#9CA3AF"
+                : isWaiting ? "#34D399"
+                : subBar?.overdue ? "#EF4444"
+                : subIsDueToday ? "#F59E0B"
+                : ct.border + "80";
+              const subTextColor = sub.status === "done" ? "#6B7280"
+                : isWaiting ? "#065F46"
+                : subBar?.overdue ? "#991B1B"
+                : subIsDueToday ? "#92400E"
+                : ct.text;
+
+              return (
+                <div key={sub.key} style={{
+                  display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+                  borderBottom: "1px solid #f0f0f0",
+                  minHeight: 28,
+                  background: hexToRgba(ct.bg, 0.06),
+                }}>
+                  {/* Subtask label */}
+                  <div style={{
+                    padding: "0 6px 0 20px",
+                    display: "flex", alignItems: "center", gap: 4, minWidth: 0,
+                  }}>
+                    <span style={{ color: "#d1d5db", fontSize: 10, flexShrink: 0 }}>↳</span>
+                    <a href={`${JIRA}/${sub.key}`} target="_blank" rel="noopener noreferrer"
+                      style={{
+                        fontSize: 10, fontWeight: 400, color: "#374151",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        flex: 1, textDecoration: "none",
+                      }}
+                      title={sub.title}>
+                      {sub.title}
+                    </a>
+                  </div>
+
+                  {/* Subtask day cells */}
                   {days.map((d, i) => {
                     const isT = sameDay(d, today);
                     const isMonday = d.getDay() === 1 && i > 0;
-                    return (
-                      <div
-                        key={i}
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          left: `${(i / 5) * 100}%`,
-                          width: 1,
-                          background: isT ? "#5b6cff" : isMonday ? "#eef0f3" : "transparent",
-                          opacity: isT ? 0.3 : 1,
-                        }}
-                      />
-                    );
-                  })}
-                  {/* Today column highlight */}
-                  {days.map((d, i) => {
-                    if (!sameDay(d, today)) return null;
-                    return (
-                      <div
-                        key={`today-${i}`}
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          left: `${(i / 5) * 100}%`,
-                          width: `${100 / 5}%`,
-                          background: "#f5f3ff",
-                          opacity: 0.5,
-                          zIndex: 0,
-                        }}
-                      />
-                    );
-                  })}
+                    const cellN = i + 1;
+                    const inSubRange = subBar && cellN >= subBar.startCol && cellN <= subBar.endCol;
+                    const isAfterDue = subBar && !inSubRange && cellN > subBar.endCol;
+                    const isOverdueDay = !!subBar?.overdue && !sub.status.includes("done") && !isWaiting;
 
-                  {/* Bars */}
-                  {bars.map((bar, barIdx) => {
-                    const isVertDragging = vertDrag?.memberName === member.name && vertDrag.taskId === bar.task.id;
-                    // Apply drag preview to this bar's columns
-                    const isBeingDragged = dragPreview?.key === bar.task.id;
-                    const displayStartCol = (isBeingDragged && dragState?.handle === "left")
-                      ? Math.min(dragPreview!.col, bar.endCol)
-                      : bar.startCol;
-                    const displayEndCol = (isBeingDragged && dragState?.handle === "right")
-                      ? Math.max(dragPreview!.col, bar.startCol)
-                      : bar.endCol;
-
-                    const startIdx = displayStartCol - 1;
-                    const endIdx   = displayEndCol - 1;
-                    const leftPct  = (startIdx / 5) * 100;
-                    const widthPct = ((endIdx - startIdx + 1) / 5) * 100;
-                    const top = bar.lane * 32;
-
-                    const isWaiting = bar.task.status === "in_review";
-                    const _today = new Date(); _today.setHours(0,0,0,0);
-                    const _due = bar.task.dueDate ? parseLocalDate(bar.task.dueDate) : null;
-                    const isDueToday = !!_due && _due.getTime() === _today.getTime();
-
-                    const colorEntry  = projectColorEntry(bar.project);
-                    const barBg = bar.isDone    ? "#F3F4F6"
-                      : bar.overdue             ? "#FEE2E2"
-                      : isDueToday              ? "#FEF3C7"
-                      : isWaiting               ? colorEntry.subtle
-                      : bar.color; // project bg
-                    const textColor = bar.isDone    ? "#4B5563"
-                      : bar.overdue             ? "#991B1B"
-                      : isDueToday              ? "#92400E"
-                      : isWaiting               ? colorEntry.subtleText
-                      : colorEntry.text;
-                    const barLabel = bar.isDone
-                      ? `✅ ${bar.task.title}`
-                      : isWaiting && bar.overdue
-                      ? `⚠️⏳ ${bar.task.title}`
-                      : isWaiting
-                      ? `⏳ ${bar.task.title}`
-                      : bar.overdue
-                      ? `⚠️ ${bar.task.title}`
-                      : isDueToday
-                      ? `📅 ${bar.task.title}`
-                      : bar.task.title;
-                    const titleTip = bar.isDone
-                      ? `✅ Entregue · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
-                      : bar.overdue
-                      ? `⚠️ ATRASADA · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nPrazo: ${bar.task.dueDate}` : ""}`
-                      : isDueToday
-                      ? `📅 Entrega hoje · ${bar.task.key} · ${bar.task.title}`
-                      : isWaiting
-                      ? `⏳ Aguardando feedback · ${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`
-                      : `${bar.task.key} · ${bar.task.title}${bar.task.dueDate ? `\nEntrega: ${bar.task.dueDate}` : ""}`;
+                    // ❗ on days after deadline ≤ today (not done, not waiting)
+                    const showExcl = isAfterDue && isOverdueDay && d <= today;
+                    // 📦⏳ on due cell when waiting
+                    const showWaiting = subBar && cellN === subBar.endCol && inSubRange && isWaiting;
 
                     return (
-                      <div
-                        key={bar.task.id}
-                        style={{
-                          position: "absolute",
-                          left: `calc(${leftPct}% + 4px)`,
-                          width: `calc(${widthPct}% - 8px)`,
-                          top: top + 8,
-                          height: 26,
-                          zIndex: isBeingDragged ? 10 : 1,
-                          opacity: isVertDragging ? 0.3 : 1,
-                        }}
-                      >
-                        {/* Left resize handle */}
-                        <div
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDragState({ key: bar.task.id, handle: "left", startX: e.clientX, initialCol: bar.startCol });
-                          }}
-                          title="Arrastar para mudar início"
-                          style={{
-                            position: "absolute",
-                            left: 0, top: 0, bottom: 0,
-                            width: 10,
-                            cursor: "ew-resize",
-                            zIndex: 5,
-                            borderRadius: "999px 0 0 999px",
-                          }}
-                        />
-
-                        {/* Vertical reorder handle */}
-                        <div
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setVertDrag({ memberName: member.name, taskId: bar.task.id, fromIdx: barIdx });
-                            vertDropIdxRef.current = { memberName: member.name, idx: barIdx };
-                            setVertDropIdx({ memberName: member.name, idx: barIdx });
-                          }}
-                          title="Arrastar para reordenar"
-                          style={{
-                            position: "absolute",
-                            left: 10, top: 0, bottom: 0, width: 14,
-                            cursor: "ns-resize",
-                            zIndex: 5,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <div style={{ display: "flex", flexDirection: "column", gap: 2.5, pointerEvents: "none" }}>
-                            {[0,1,2].map(i => (
-                              <div key={i} style={{ width: 8, height: 1.5, background: `${textColor}60`, borderRadius: 1 }} />
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Main bar link */}
-                        <a
-                          href={`${JIRA}/${bar.task.key}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={titleTip}
-                          onClick={(e) => { if (dragState || vertDrag) e.preventDefault(); }}
-                          style={{
-                            position: "absolute",
-                            left: 0, right: 0, top: 0, bottom: 0,
-                            background: barBg,
-                            color: textColor,
-                            borderRadius: 999,
-                            padding: "0 22px 0 28px",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            fontSize: 11,
-                            fontWeight: bar.isDone ? 400 : 600,
-                            opacity: bar.isDone ? 0.7 : 1,
-                            textDecoration: "none",
-                            overflow: "hidden",
-                            whiteSpace: "nowrap",
-                            boxShadow: isBeingDragged
-                              ? "0 4px 16px rgba(0,0,0,0.18)"
-                              : "0 1px 2px rgba(0,0,0,0.06)",
-                            borderLeft: bar.startsBefore ? "3px solid rgba(255,255,255,0.6)" : "none",
-                            transition: isBeingDragged ? "none" : "box-shadow 0.15s",
-                            userSelect: "none",
-                          }}
-                        >
-                          {bar.startsBefore && <span style={{ opacity: 0.85, fontSize: 10 }}>←</span>}
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
-                            {barLabel}
+                      <div key={i} style={{
+                        position: "relative",
+                        borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+                        minHeight: 28,
+                        background: (subBar?.overdue && !isWaiting && cellN === subBar.endCol && inSubRange) ? "#FEE2E2"
+                          : isT && !inSubRange ? "#f5f3ff" : "transparent",
+                      }}>
+                        {/* Subtask bar */}
+                        {inSubRange && (
+                          <div
+                            onMouseDown={(e) => {
+                              if (e.button !== 0 || sub.status === "done") return;
+                              e.preventDefault();
+                              setDragState({ key: sub.id, handle: cellN === subBar.startCol ? "left" : "right", startX: e.clientX, initialCol: cellN === subBar.startCol ? subBar.startCol : subBar.endCol });
+                            }}
+                            style={{
+                              position: "absolute", top: 3, bottom: 3, left: 0, right: 0,
+                              background: subBg,
+                              borderLeft: cellN === subBar.startCol ? `3px solid ${subBorder}` : undefined,
+                              borderRadius: (cellN === subBar.startCol && !subBar.startsBefore) && cellN === subBar.endCol ? "3px"
+                                : (cellN === subBar.startCol && !subBar.startsBefore) ? "3px 0 0 3px"
+                                : cellN === subBar.endCol ? "0 3px 3px 0" : "0",
+                              opacity: sub.status === "done" ? 0.7 : 1,
+                              cursor: sub.status === "done" ? "default" : "grab",
+                            }}
+                          />
+                        )}
+                        {/* Deadline label for subtask */}
+                        {subBar && cellN === subBar.endCol && inSubRange && !isWaiting && (
+                          <span style={{
+                            position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                            fontSize: 9, fontWeight: 700, color: subTextColor,
+                            whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none",
+                            maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis", display: "block",
+                          }}>
+                            {sub.status === "done" ? `✅ · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`
+                              : subBar.overdue ? `⚠️ · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`
+                              : subIsDueToday ? `📅 · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`
+                              : `Deadline · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`}
                           </span>
-                        </a>
-
-                        {/* Right resize handle */}
-                        <div
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDragState({ key: bar.task.id, handle: "right", startX: e.clientX, initialCol: bar.endCol });
-                          }}
-                          title="Arrastar para mudar prazo"
-                          style={{
-                            position: "absolute",
-                            right: 0, top: 0, bottom: 0,
-                            width: 10,
-                            cursor: "ew-resize",
-                            zIndex: 5,
-                            borderRadius: "0 999px 999px 0",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <div style={{ width: 2, height: 10, background: "rgba(255,255,255,0.55)", borderRadius: 2 }} />
-                        </div>
+                        )}
+                        {/* 📦⏳ waiting cell */}
+                        {showWaiting && (
+                          <span title="Entregue · Aguardando feedback" style={{
+                            position: "absolute", top: "50%", left: "50%",
+                            transform: "translate(-50%,-50%)",
+                            fontSize: 11, zIndex: 2, pointerEvents: "none", userSelect: "none",
+                          }}>📦⏳</span>
+                        )}
+                        {/* ❗ overdue indicator */}
+                        {showExcl && (
+                          <span style={{
+                            position: "absolute", top: "50%", left: "50%",
+                            transform: "translate(-50%,-50%)",
+                            fontSize: 11, zIndex: 2, pointerEvents: "none", userSelect: "none",
+                          }}>❗</span>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+})}
           </div>{/* end minWidth body */}
         </div>{/* end ganttBodyRef scroll div */}
       </div>{/* end gantt card */}
