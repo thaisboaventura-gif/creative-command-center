@@ -1205,19 +1205,23 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* Parent task deadline label — same style as subtask, shown when not all subs done */}
-              {isDueCell && isParent && bar && !allSubsDone && (
+              {/* Parent task deadline / done label on the due cell */}
+              {isDueCell && isParent && bar && (() => {
+                // allSubsDone + allDoneCol in window → ✅ already rendered by the block above
+                if (allSubsDone && allDoneCol !== null) return false;
+                return true;
+              })() && (
                 <span style={{
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
                   fontSize: 9, fontWeight: 700,
                   color: styles.labelColor,
                   textShadow: "none",
-                  whiteSpace: "nowrap", zIndex: 1, pointerEvents: "none", lineHeight: 1,
+                  whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none", lineHeight: 1,
                   maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis",
                   display: "block",
                 }}>
-                  {`Deadline · ${bar.dueLabel}`}
+                  {allSubsDone ? `✅ Entregue · ${bar.dueLabel}` : `Deadline · ${bar.dueLabel}`}
                 </span>
               )}
             </div>
