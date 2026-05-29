@@ -989,17 +989,21 @@ export default function PerformanceDashboard() {
           // isOverdue: past deadline, not done, not waiting feedback
           const isSubOverdue = !isParent && !!bar && bar.overdue && !bar.isDone && !bar.isWaiting;
 
+          // Fix: ❗ only on days that already passed (≤ today), never on future days
+          const isTodayOrPast = d <= today;
+
           const subEmoji: string | null = !isParent && bar ? (() => {
             // 📦 no dia da entrega real (resolvedAt) ou no due date como fallback
             if (isResolvedCell && bar.isDone) return "📦";
             if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦";
-            // 📦⏳ no due date quando waiting feedback
-            if (isDueCell && bar.isWaiting) return "📦⏳";
-            // ❗ / ❗💬 apenas nos dias APÓS o deadline — nunca no deadline em si
-            // (o deadline já tem subDueBg vermelho como indicador visual)
-            if (isAfterDue && isSubOverdue) return hasComment ? "❗💬" : "❗";
+            // 📦⏳ handled separately as double-height cell — no emoji here
+            // ❗ / ❗💬 apenas nos dias APÓS o deadline E que já passaram (≤ hoje)
+            if (isAfterDue && isSubOverdue && isTodayOrPast) return hasComment ? "❗💬" : "❗";
             return null;
           })() : null;
+
+          // Fix 1: double-height cell for waiting-feedback subtask on due date
+          const isWaitingDueCell = isDueCell && !isParent && !!bar?.isWaiting;
 
           // Subtask due cell bg override
           const subDueBg = !isParent && isDueCell && bar?.overdue && !bar.isDone && !bar.isWaiting
@@ -1033,7 +1037,7 @@ export default function PerformanceDashboard() {
                 position: "relative",
                 borderRight,
                 borderLeft: isExecStart ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
-                minHeight: isParent ? 32 : 28,
+                minHeight: isWaitingDueCell ? 56 : isParent ? 32 : 28,
                 background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
                 overflow: "visible",
               }}
@@ -1120,8 +1124,26 @@ export default function PerformanceDashboard() {
                 </span>
               )}
 
-              {/* Deadline / Em atraso label — only on own due date (no subtask markers) */}
-              {isDueCell && !hasSubDeadlines && (
+              {/* Waiting-feedback subtask due cell — two stacked lines */}
+              {isWaitingDueCell && (
+                <div style={{
+                  position: "absolute", inset: 0,
+                  display: "flex", flexDirection: "column",
+                  justifyContent: "center", alignItems: "flex-start",
+                  gap: 2, padding: "0 6px",
+                  pointerEvents: "none", zIndex: 1,
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: styles.labelColor, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                    📦 Entregue
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: styles.labelColor, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                    ⏳ Aguardando
+                  </span>
+                </div>
+              )}
+
+              {/* Deadline / Em atraso label — only on own due date, not waiting subtask (handled above) */}
+              {isDueCell && !hasSubDeadlines && !isWaitingDueCell && (
                 <span style={{
                   position: "absolute",
                   right: 4, top: "50%", transform: "translateY(-50%)",
@@ -1134,8 +1156,7 @@ export default function PerformanceDashboard() {
                 }}>
                   {[
                     styles.prefix,
-                    bar!.isWaiting && bar!.overdue ? "Entregue · aguardando"
-                      : bar!.overdue ? "Em atraso"
+                    bar!.overdue ? "Em atraso"
                       : bar!.isDueToday ? "Entrega hoje"
                       : bar!.isDone ? "Entregue"
                       : "Deadline",
