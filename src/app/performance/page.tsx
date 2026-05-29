@@ -984,13 +984,13 @@ export default function PerformanceDashboard() {
           const isSubOverdue = !isParent && !!bar && bar.overdue && !bar.isDone && !bar.isWaiting;
 
           const subEmoji: string | null = !isParent && bar ? (() => {
-            // ✅ Entregue — 📦 no dia da entrega real (resolvedAt) ou no due date como fallback
+            // 📦 no dia da entrega real (resolvedAt) ou no due date como fallback
             if (isResolvedCell && bar.isDone) return "📦";
             if (isDueCell && bar.isDone && !subResolvedAtCol) return "📦";
-            // ⏳ Waiting feedback — 📦⏳ no due date
+            // 📦⏳ no due date quando waiting feedback
             if (isDueCell && bar.isWaiting) return "📦⏳";
-            // ❗ Em atraso — no due date e nos dias seguintes (sem done, sem waiting)
-            if (isDueCell && isSubOverdue) return hasComment ? "❗💬" : "❗";
+            // ❗ / ❗💬 apenas nos dias APÓS o deadline — nunca no deadline em si
+            // (o deadline já tem subDueBg vermelho como indicador visual)
             if (isAfterDue && isSubOverdue) return hasComment ? "❗💬" : "❗";
             return null;
           })() : null;
