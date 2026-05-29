@@ -152,6 +152,11 @@ function darkenHex(hex: string, factor: number): string {
   return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
+function hexToRgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
+}
+
 interface GanttBar {
   startCol: number;      // 1-based
   endCol: number;        // 1-based, inclusive (the due-date column)
@@ -896,7 +901,9 @@ export default function PerformanceDashboard() {
           gridTemplateColumns: GRID_COLS,
           borderBottom: "1px solid #f3f4f6",
           minHeight: isParent ? 32 : 28,
-          background: "white",
+          background: isParent
+            ? hexToRgba(colorTokens.bg, 0.15)
+            : hexToRgba(colorTokens.bg, 0.06),
           cursor: "pointer",
           opacity: isVertDragging ? 0.3 : 1,
           transition: "opacity 0.1s",
@@ -906,6 +913,7 @@ export default function PerformanceDashboard() {
         <div style={{
           padding: indent ? "0 8px 0 26px" : "0 6px 0 8px",
           display: "flex", alignItems: "center", gap: 4, minWidth: 0,
+          borderLeft: isParent ? `4px solid ${colorTokens.bg}` : undefined,
         }}>
           {/* Vertical reorder handle — parent tasks only */}
           {isParent && onVertDragStart && (
