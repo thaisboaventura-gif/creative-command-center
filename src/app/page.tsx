@@ -127,17 +127,17 @@ function extractProject(title: string): string {
   return cleaned.split(" ").slice(0, 3).join(" ");
 }
 
-interface PaletteEntry { bg: string; text: string; border: string; }
+interface PaletteEntry { bg: string; text: string; subtleText: string; border: string; }
 
 const PALETTE: PaletteEntry[] = [
-  { bg: '#80B0E8', text: '#1a3a5c', border: '#5a8fc7' },
-  { bg: '#008471', text: '#ffffff', border: '#006057' },
-  { bg: '#D1CAEA', text: '#3b2d6e', border: '#9b90c9' },
-  { bg: '#F4D242', text: '#5c3d00', border: '#c9a800' },
-  { bg: '#C45F3F', text: '#ffffff', border: '#9a3e22' },
-  { bg: '#898E46', text: '#ffffff', border: '#5f6230' },
-  { bg: '#FFC0C0', text: '#7a1c1c', border: '#e07070' },
-  { bg: '#F29CC3', text: '#6b0a3a', border: '#c9609a' },
+  { bg: '#80B0E8', text: '#1a3a5c', subtleText: '#1a3a5c', border: '#5a8fc7' },
+  { bg: '#008471', text: '#ffffff', subtleText: '#005a4d', border: '#006057' },
+  { bg: '#D1CAEA', text: '#3b2d6e', subtleText: '#3b2d6e', border: '#9b90c9' },
+  { bg: '#F4D242', text: '#5c3d00', subtleText: '#5c3d00', border: '#c9a800' },
+  { bg: '#C45F3F', text: '#ffffff', subtleText: '#7a2e10', border: '#9a3e22' },
+  { bg: '#898E46', text: '#ffffff', subtleText: '#3a3d10', border: '#5f6230' },
+  { bg: '#FFC0C0', text: '#7a1c1c', subtleText: '#7a1c1c', border: '#e07070' },
+  { bg: '#F29CC3', text: '#6b0a3a', subtleText: '#6b0a3a', border: '#c9609a' },
 ];
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -565,15 +565,35 @@ export default function Dashboard() {
       childMap.set(t.parentKey!, arr);
     });
 
-    // Apply custom order to parent tasks
-    const customOrder = taskOrders[m.name] ?? [];
-    const orderedParents = customOrder.length > 0
-      ? [...customOrder.map(id => parentTasks.find(t => t.id === id)).filter(Boolean) as TaskItem[],
-         ...parentTasks.filter(t => !customOrder.includes(t.id))]
-      : parentTasks;
+    // Filter: only parent tasks with deadline in the current visible week
+    const weekStart = new Date(days[0]); weekStart.setHours(0, 0, 0, 0);
+    const weekEnd   = new Date(days[days.length - 1]); weekEnd.setHours(23, 59, 59, 999);
+
+    function effectiveDue(t: TaskItem): Date | null {
+      // Use the task's own due date, or max of children's due dates
+      const subs = childMap.get(t.key) ?? [];
+      const dates: Date[] = [];
+      if (t.dueDate) dates.push(parseLocalDate(t.dueDate));
+      subs.forEach(s => { if (s.dueDate) dates.push(parseLocalDate(s.dueDate)); });
+      if (dates.length === 0) return null;
+      return dates.reduce((a, b) => b > a ? b : a);
+    }
+
+    const weekParents = parentTasks.filter(t => {
+      const due = effectiveDue(t);
+      if (!due) return false;
+      return due >= weekStart && due <= weekEnd;
+    });
+
+    // Sort by effective due date ascending (closest deadline first)
+    const sortedParents = [...weekParents].sort((a, b) => {
+      const da = effectiveDue(a)?.getTime() ?? Infinity;
+      const db = effectiveDue(b)?.getTime() ?? Infinity;
+      return da - db;
+    });
 
     const backlog = m.tasks.filter(t => !t.dueDate && t.status !== "done").length;
-    return { member: m, cfg, areaC, orderedParents, childMap, backlog };
+    return { member: m, cfg, areaC, orderedParents: sortedParents, childMap, backlog };
   });
   rowsRef.current = []; // reset (vertical reorder refs no longer needed in new layout)
 
@@ -815,10 +835,9 @@ export default function Dashboard() {
                 )}
                 <a href={`${JIRA}/${parent.key}`} target="_blank" rel="noopener noreferrer"
                   style={{
-                    fontSize: 11, fontWeight: 700, color: ct.text,
+                    fontSize: 11, fontWeight: 700, color: ct.subtleText,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     flex: 1, textDecoration: "none",
-                    background: hexToRgba(ct.bg, 0.0),
                   }}
                   title={parent.title}>
                   {parent.title}
@@ -917,7 +936,7 @@ export default function Dashboard() {
                 : isWaiting ? "#065F46"
                 : subBar?.overdue ? "#991B1B"
                 : subIsDueToday ? "#92400E"
-                : ct.text;
+                : ct.subtleText; // dark readable on translucent background
 
               return (
                 <div key={sub.key} style={{
