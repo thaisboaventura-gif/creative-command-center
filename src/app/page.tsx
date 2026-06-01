@@ -1229,7 +1229,8 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
   monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   monday.setHours(0, 0, 0, 0);
 
-  const thisWeek = items.filter((i) => new Date(i.createdAt) >= monday);
+  // parseLocalDate avoids UTC-parse bug: new Date("2026-06-01") → UTC midnight → Brazil = May 31 21h
+  const thisWeek = items.filter((i) => parseLocalDate(i.createdAt) >= monday);
   const assigned = thisWeek.filter((i) => i.assignee);
   const unassigned = thisWeek.filter((i) => !i.assignee);
 

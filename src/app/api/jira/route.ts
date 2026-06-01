@@ -378,8 +378,8 @@ export async function GET() {
       return (s[a.severity] ?? 2) - (s[b.severity] ?? 2);
     });
 
-    // New demands (unfiltered — all recent project tasks, up to 100)
-    const newDemands = newIssues.slice(0, 100).map((issue) => {
+    // New demands — filtered by Country=Brasil, up to 200
+    const newDemands = newIssues.filter(isBrasil).slice(0, 200).map((issue) => {
       const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
       return {
         id: issue.key,
