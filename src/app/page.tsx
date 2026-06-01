@@ -878,13 +878,14 @@ export default function Dashboard() {
                         }}
                       />
                     )}
-                    {/* Deadline label */}
+                    {/* Deadline label — centered in the due-date cell */}
                     {isDeadlineCell && parentBar && (
                       <span style={{
-                        position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                        position: "absolute", left: "50%", top: "50%",
+                        transform: "translate(-50%, -50%)",
                         fontSize: 9, fontWeight: 700, color: ct.text,
                         whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none",
-                        maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis", display: "block",
+                        maxWidth: "calc(100% - 6px)", overflow: "hidden", textOverflow: "ellipsis",
                       }}>
                         {`Deadline · ${parseLocalDate(parent.dueDate!).getDate()}/${parseLocalDate(parent.dueDate!).getMonth()+1}`}
                       </span>
@@ -1010,13 +1011,14 @@ export default function Dashboard() {
                             }}
                           />
                         )}
-                        {/* Deadline label for subtask */}
+                        {/* Deadline label — centered in due-date cell */}
                         {subBar && cellN === subBar.endCol && inSubRange && !isWaiting && (
                           <span style={{
-                            position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                            position: "absolute", left: "50%", top: "50%",
+                            transform: "translate(-50%, -50%)",
                             fontSize: 9, fontWeight: 700, color: subTextColor,
                             whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none",
-                            maxWidth: "calc(100% - 8px)", overflow: "hidden", textOverflow: "ellipsis", display: "block",
+                            maxWidth: "calc(100% - 6px)", overflow: "hidden", textOverflow: "ellipsis",
                           }}>
                             {sub.status === "done" ? `✅ · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`
                               : subBar.overdue ? `⚠️ · ${parseLocalDate(sub.dueDate!).getDate()}/${parseLocalDate(sub.dueDate!).getMonth()+1}`
