@@ -552,6 +552,8 @@ export default function Dashboard() {
 
   const today = new Date();
   const now = Date.now();
+  // todayMidnight: para comparação de prazo — só é "em atraso" se passou do dia (< midnight de hoje)
+  const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
 
   const order = ["eduardo", "lucas", "joao", "beatriz", "larissa", "francisco"];
   const sorted = [...team].sort((a, b) => {
@@ -846,13 +848,21 @@ export default function Dashboard() {
                 </a>
                 {(() => {
                   const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
-                  const parentOverdue = parentDue !== null && parentDue < today && parent.status !== "done" && parent.status !== "in_review";
+                  const parentOverdue = parentDue !== null && parentDue < todayMidnight && parent.status !== "done" && parent.status !== "in_review";
                   const chip = statusChipProps(parent.status, parentOverdue);
                   return (
-                    <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20,
-                      background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
-                      {chip.label}
-                    </span>
+                    <>
+                      {/* Past-week deadline label (bar not visible in current window) */}
+                      {!parentBar && parentDue && parentOverdue && (
+                        <span style={{ fontSize: 9, color: "#991b1b", flexShrink: 0, whiteSpace: "nowrap" }}>
+                          📅 {parentDue.getDate()}/{parentDue.getMonth()+1}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20,
+                        background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
+                        {chip.label}
+                      </span>
+                    </>
                   );
                 })()}
               </div>
@@ -983,13 +993,21 @@ export default function Dashboard() {
                     </a>
                     {(() => {
                       const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
-                      const subOverdue2 = subDue2 !== null && subDue2 < today && sub.status !== "done" && sub.status !== "in_review";
+                      const subOverdue2 = subDue2 !== null && subDue2 < todayMidnight && sub.status !== "done" && sub.status !== "in_review";
                       const chip = statusChipProps(sub.status, subOverdue2);
                       return (
-                        <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 20,
-                          background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
-                          {chip.label}
-                        </span>
+                        <>
+                          {/* Past-week deadline label */}
+                          {!subBar && subDue2 && subOverdue2 && (
+                            <span style={{ fontSize: 9, color: "#991b1b", flexShrink: 0, whiteSpace: "nowrap" }}>
+                              📅 {subDue2.getDate()}/{subDue2.getMonth()+1}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 20,
+                            background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
+                            {chip.label}
+                          </span>
+                        </>
                       );
                     })()}
                   </div>
