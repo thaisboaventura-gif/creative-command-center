@@ -127,6 +127,9 @@ function extractProject(title: string): string {
   return cleaned.split(" ").slice(0, 3).join(" ");
 }
 
+const MAIN_LABEL_W_DEFAULT = 180;
+const MAIN_LABEL_W_KEY     = "main_label_w_v1";
+
 interface PaletteEntry { bg: string; text: string; subtleText: string; border: string; }
 
 const PALETTE: PaletteEntry[] = [
@@ -290,8 +293,11 @@ export default function Dashboard() {
   } | null>(null);
   const barZoneRef     = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<{ key: string; col: number } | null>(null);
-  const ganttHeaderRef = useRef<HTMLDivElement | null>(null);
-  const ganttBodyRef   = useRef<HTMLDivElement | null>(null);
+  const ganttHeaderRef    = useRef<HTMLDivElement | null>(null);
+  const ganttBodyRef      = useRef<HTMLDivElement | null>(null);
+  const [labelWidth,      setLabelWidth]      = useState(MAIN_LABEL_W_DEFAULT);
+  const [isResizingLabel, setIsResizingLabel] = useState(false);
+  const labelResizeRef    = useRef<{ startX: number; startW: number } | null>(null);
 
   type UndoAction =
     | { type: "start"; key: string; prevCol: number | undefined }
@@ -341,7 +347,41 @@ export default function Dashboard() {
       const raw = localStorage.getItem("main_collapsed_v1");
       if (raw) setMainCollapsed(new Set(JSON.parse(raw)));
     } catch { /* ignore */ }
+
+    const savedW = parseInt(localStorage.getItem(MAIN_LABEL_W_KEY) ?? "");
+    if (!isNaN(savedW) && savedW >= 120) setLabelWidth(savedW);
   }, []);
+
+  // Label column resize
+  useEffect(() => {
+    if (!isResizingLabel) return;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const onMouseMove = (e: MouseEvent) => {
+      if (!labelResizeRef.current) return;
+      const delta = e.clientX - labelResizeRef.current.startX;
+      const newW  = Math.max(120, Math.min(480, labelResizeRef.current.startW + delta));
+      setLabelWidth(newW);
+    };
+    const onMouseUp = () => {
+      setIsResizingLabel(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setLabelWidth((w) => {
+        localStorage.setItem(MAIN_LABEL_W_KEY, String(w));
+        return w;
+      });
+      labelResizeRef.current = null;
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup",   onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup",   onMouseUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [isResizingLabel]);
 
   // Global drag mouse events
   useEffect(() => {
@@ -554,6 +594,7 @@ export default function Dashboard() {
   const now = Date.now();
   // todayMidnight: para comparação de prazo — só é "em atraso" se passou do dia (< midnight de hoje)
   const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
+  const GRID_COLS = `${labelWidth}px repeat(5, 1fr)`;
 
   const order = ["eduardo", "lucas", "joao", "beatriz", "larissa", "francisco"];
   const sorted = [...team].sort((a, b) => {
@@ -690,9 +731,29 @@ export default function Dashboard() {
           >
             <div style={{ minWidth: 680 }}>
           {/* Header: day columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)" }}>
-            <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>
+          <div style={{ display: "grid", gridTemplateColumns: GRID_COLS }}>
+            <div style={{ padding: "14px 16px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, position: "relative" }}>
               Time
+              {/* Resize handle */}
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  labelResizeRef.current = { startX: e.clientX, startW: labelWidth };
+                  setIsResizingLabel(true);
+                }}
+                title="Arrastar para redimensionar coluna"
+                style={{
+                  position: "absolute", right: 0, top: 0, bottom: 0, width: 8,
+                  cursor: "col-resize", zIndex: 2,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <div style={{
+                  width: 3, height: 18,
+                  background: isResizingLabel ? "#7c3aed" : "#e5e7eb",
+                  borderRadius: 2, transition: "background 0.1s",
+                }} />
+              </div>
             </div>
             {days.map((d, i) => {
               const isT = sameDay(d, today);
@@ -748,7 +809,7 @@ export default function Dashboard() {
     <div key={member.name}>
       {/* ── Person header ── */}
       <div style={{
-        display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+        display: "grid", gridTemplateColumns: GRID_COLS,
         borderBottom: "2px solid #e5e7eb",
         background: "#f9fafb", minHeight: 40,
       }}>
@@ -820,7 +881,7 @@ export default function Dashboard() {
           <div key={parent.key}>
             {/* Parent task row */}
             <div style={{
-              display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+              display: "grid", gridTemplateColumns: GRID_COLS,
               borderBottom: "1px solid #e9ecef",
               minHeight: 32,
               background: hexToRgba(ct.bg, 0.15),
@@ -971,7 +1032,7 @@ export default function Dashboard() {
 
               return (
                 <div key={sub.key} style={{
-                  display: "grid", gridTemplateColumns: "180px repeat(5, 1fr)",
+                  display: "grid", gridTemplateColumns: GRID_COLS,
                   borderBottom: "1px solid #f0f0f0",
                   minHeight: 28,
                   background: hexToRgba(ct.bg, 0.06),
