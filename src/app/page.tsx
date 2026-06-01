@@ -246,6 +246,17 @@ function fmtH(h: number): string {
 
 const AREA_COLORS: Record<string, string> = { design: "#7c3aed", copy: "#2563eb", motion: "#ea580c" };
 
+function statusChipProps(status: string, isOverdue: boolean): { label: string; bg: string; color: string } {
+  if (isOverdue) return { label: "⚠️ Em atraso",    bg: "#fee2e2", color: "#991b1b" };
+  const map: Record<string, { label: string; bg: string; color: string }> = {
+    done:        { label: "✅ Entregue",      bg: "#f3f4f6", color: "#6b7280" },
+    in_review:   { label: "⏳ Aguardando",    bg: "#fff7ed", color: "#c2410c" },
+    in_progress: { label: "🔵 Em andamento",  bg: "#eff6ff", color: "#1d4ed8" },
+    to_do:       { label: "⚪ A fazer",        bg: "#f9fafb", color: "#9ca3af" },
+  };
+  return map[status] ?? map.to_do;
+}
+
 /* ── Component ── */
 
 export default function Dashboard() {
@@ -828,11 +839,22 @@ export default function Dashboard() {
                   style={{
                     fontSize: 11, fontWeight: 700, color: ct.subtleText,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    flex: 1, textDecoration: "none",
+                    flex: 1, textDecoration: "none", minWidth: 0,
                   }}
                   title={parent.title}>
                   {parent.title}
                 </a>
+                {(() => {
+                  const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
+                  const parentOverdue = parentDue !== null && parentDue < today && parent.status !== "done" && parent.status !== "in_review";
+                  const chip = statusChipProps(parent.status, parentOverdue);
+                  return (
+                    <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20,
+                      background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {chip.label}
+                    </span>
+                  );
+                })()}
               </div>
 
               {/* Day cells */}
@@ -954,11 +976,22 @@ export default function Dashboard() {
                       style={{
                         fontSize: 10, fontWeight: 400, color: "#374151",
                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        flex: 1, textDecoration: "none",
+                        flex: 1, textDecoration: "none", minWidth: 0,
                       }}
                       title={sub.title}>
                       {sub.title}
                     </a>
+                    {(() => {
+                      const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
+                      const subOverdue2 = subDue2 !== null && subDue2 < today && sub.status !== "done" && sub.status !== "in_review";
+                      const chip = statusChipProps(sub.status, subOverdue2);
+                      return (
+                        <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 20,
+                          background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
+                          {chip.label}
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {/* Subtask day cells */}

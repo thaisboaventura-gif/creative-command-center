@@ -329,18 +329,21 @@ function groupByMonth(tasks: PerfTask[]): MonthGroup[] {
 
 /* ─── Sub-components ─── */
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isOverdue = false }: { status: string; isOverdue?: boolean }) {
   const colors: Record<string, { bg: string; color: string }> = {
     done:        { bg: "#f3f4f6", color: "#6b7280" },
-    in_review:   { bg: "#fff1f2", color: "#e11d48" },
+    in_review:   { bg: "#fff7ed", color: "#c2410c" },  // orange
     in_progress: { bg: "#eff6ff", color: "#1d4ed8" },
     to_do:       { bg: "#f9fafb", color: "#9ca3af" },
+    overdue:     { bg: "#fee2e2", color: "#991b1b" },  // red
   };
-  const c = colors[status] ?? colors.to_do;
+  const key = isOverdue ? "overdue" : status;
+  const c = colors[key] ?? colors.to_do;
+  const label = isOverdue ? "⚠️ Em atraso" : (STATUS_LABEL[status] ?? status);
   return (
     <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
       background: c.bg, color: c.color, whiteSpace: "nowrap", flexShrink: 0 }}>
-      {STATUS_LABEL[status] ?? status}
+      {label}
     </span>
   );
 }
@@ -866,6 +869,15 @@ export default function PerformanceDashboard() {
     })();
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Globally overdue: past dueDate, not done, not waiting — persists across all weeks
+    const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
+    const taskDue = task.dueDate ? parseLocalDate(task.dueDate) : null;
+    const isGloballyOverdue = !isParent &&
+      taskDue !== null &&
+      taskDue < todayMidnight &&
+      task.status !== "done" &&
+      task.status !== "in_review";
+
     const jiraHref = `${JIRA_BASE}/${taskKey}`;
 
     // ── Drag preview ──
@@ -979,7 +991,7 @@ export default function PerformanceDashboard() {
             {task.title}
           </span>
 
-          <StatusBadge status={task.status} />
+          <StatusBadge status={task.status} isOverdue={isGloballyOverdue} />
 
           {isParent && (
             <button
@@ -1022,11 +1034,19 @@ export default function PerformanceDashboard() {
           // Fix: ❗ only on days that already passed (≤ today), never on future days
           const isTodayOrPast = d <= today;
 
-          const subEmoji: string | null = !isParent && bar ? (() => {
-            // 📦 removido — o label "✅ Entregue · DD/M" já cobre o estado done
+          const subEmoji: string | null = !isParent ? (() => {
+            if (!bar && !isGloballyOverdue) return null;
+            // 📦 on resolved/due date when done
+            if (bar?.isDone) {
+              if (isResolvedCell) return "📦";
+              if (isDueCell && !subResolvedAtCol) return "📦";
+            }
             // 📦⏳ handled separately as waiting-feedback cell
-            // ❗ / ❗💬 apenas nos dias APÓS o deadline E que já passaram (≤ hoje)
+            // ❗ when overdue after deadline, ≤ today
+            // Case A: deadline in this window → after due date
             if (isAfterDue && isSubOverdue && isTodayOrPast) return hasComment ? "❗💬" : "❗";
+            // Case B: deadline was in a PAST week (bar=null) → all cells ≤ today are "after deadline"
+            if (isGloballyOverdue && !bar && isTodayOrPast) return hasComment ? "❗💬" : "❗";
             return null;
           })() : null;
 
