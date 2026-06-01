@@ -565,12 +565,7 @@ export default function Dashboard() {
       childMap.set(t.parentKey!, arr);
     });
 
-    // Filter: only parent tasks with deadline in the current visible week
-    const weekStart = new Date(days[0]); weekStart.setHours(0, 0, 0, 0);
-    const weekEnd   = new Date(days[days.length - 1]); weekEnd.setHours(23, 59, 59, 999);
-
     function effectiveDue(t: TaskItem): Date | null {
-      // Use the task's own due date, or max of children's due dates
       const subs = childMap.get(t.key) ?? [];
       const dates: Date[] = [];
       if (t.dueDate) dates.push(parseLocalDate(t.dueDate));
@@ -579,14 +574,13 @@ export default function Dashboard() {
       return dates.reduce((a, b) => b > a ? b : a);
     }
 
-    const weekParents = parentTasks.filter(t => {
-      const due = effectiveDue(t);
-      if (!due) return false;
-      return due >= weekStart && due <= weekEnd;
+    // Show all active parent tasks with a deadline, sorted by closest deadline first
+    const activeParents = parentTasks.filter(t => {
+      if (t.status === "done") return false; // hide completed
+      return effectiveDue(t) !== null;       // must have some deadline
     });
 
-    // Sort by effective due date ascending (closest deadline first)
-    const sortedParents = [...weekParents].sort((a, b) => {
+    const sortedParents = [...activeParents].sort((a, b) => {
       const da = effectiveDue(a)?.getTime() ?? Infinity;
       const db = effectiveDue(b)?.getTime() ?? Infinity;
       return da - db;
@@ -1192,7 +1186,8 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
 
                 {/* Date */}
                 <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>
-                  {relativeDay(item.createdAt)}
+                  {(() => { const d = new Date(item.createdAt); return `${d.getDate()}/${d.getMonth()+1}`; })()}
+                  <span style={{ color: "#d1d5db", marginLeft: 3 }}>({relativeDay(item.createdAt)})</span>
                 </span>
 
                 {/* Hours estimate */}

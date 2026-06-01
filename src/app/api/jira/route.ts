@@ -144,7 +144,7 @@ export async function GET() {
 
     const [boardIssues, newIssues, teamSubsRaw, thaisUnassigned] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
-      fetchAllIssues(base, auth, newJql, 1),
+      fetchAllIssues(base, auth, newJql, 2),
       fetchAllIssues(base, auth, subJql, 3).catch((e) => {
         console.error("[jira] subJql failed:", e);
         return [] as JiraIssue[];
@@ -378,8 +378,8 @@ export async function GET() {
       return (s[a.severity] ?? 2) - (s[b.severity] ?? 2);
     });
 
-    // New demands (unfiltered — all recent project tasks)
-    const newDemands = newIssues.slice(0, 10).map((issue) => {
+    // New demands (unfiltered — all recent project tasks, up to 100)
+    const newDemands = newIssues.slice(0, 100).map((issue) => {
       const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
       return {
         id: issue.key,
