@@ -690,7 +690,7 @@ export default function Dashboard() {
                   style={{
                     padding: "8px 2px",
                     textAlign: "center",
-                    borderLeft: isMonday ? "1px solid #eef0f3" : "none",
+                    borderRight: isT ? "1px solid #c4b5fd" : i < days.length - 1 ? "1px solid #eef0f3" : "none",
                     background: isT ? "#f5f3ff" : "transparent",
                     position: "relative",
                   }}
@@ -754,10 +754,10 @@ export default function Dashboard() {
         </div>
         {days.map((d, i) => {
           const isT = sameDay(d, today);
-          const isMonday = d.getDay() === 1 && i > 0;
+          const isLast = i === days.length - 1;
           return (
             <div key={i} style={{
-              borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+              borderRight: isT ? "1px solid #c4b5fd" : isLast ? "none" : "1px dashed #e5e7eb",
               background: isT ? "#f0edff" : "transparent",
             }} />
           );
@@ -838,17 +838,24 @@ export default function Dashboard() {
               {/* Day cells */}
               {days.map((d, i) => {
                 const isT = sameDay(d, today);
-                const isMonday = d.getDay() === 1 && i > 0;
                 const cellN = i + 1;
                 const inParentRange = parentBar && cellN >= parentBar.startCol && cellN <= parentBar.endCol;
                 const isDueCell = parentBar && cellN === parentBar.endCol && inParentRange;
                 const isDeadlineCell = isDueCell && !allSubsDone;
                 const isAllDoneCell = allDoneColIdx !== null && i === allDoneColIdx;
+                const isLast = i === days.length - 1;
+
+                const borderRight = isT
+                  ? "1px solid #c4b5fd"
+                  : isDeadlineCell
+                  ? `2px solid ${ct.border}`
+                  : isLast ? "none"
+                  : "1px dashed #e5e7eb";
 
                 return (
                   <div key={i} style={{
                     position: "relative",
-                    borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+                    borderRight,
                     minHeight: 32,
                     background: isT && !inParentRange ? "#f5f3ff" : "transparent",
                   }}>
@@ -956,23 +963,31 @@ export default function Dashboard() {
                   {/* Subtask day cells */}
                   {days.map((d, i) => {
                     const isT = sameDay(d, today);
-                    const isMonday = d.getDay() === 1 && i > 0;
                     const cellN = i + 1;
                     const inSubRange = subBar && cellN >= subBar.startCol && cellN <= subBar.endCol;
                     const isAfterDue = subBar && !inSubRange && cellN > subBar.endCol;
                     const isOverdueDay = !!subBar?.overdue && !sub.status.includes("done") && !isWaiting;
+                    const isSubDueCell = subBar && cellN === subBar.endCol && inSubRange;
+                    const isLastCell = i === days.length - 1;
 
                     // ❗ on days after deadline ≤ today (not done, not waiting)
                     const showExcl = isAfterDue && isOverdueDay && d <= today;
                     // 📦⏳ on due cell when waiting
-                    const showWaiting = subBar && cellN === subBar.endCol && inSubRange && isWaiting;
+                    const showWaiting = isSubDueCell && isWaiting;
+
+                    const subCellBorder = isT
+                      ? "1px solid #c4b5fd"
+                      : isSubDueCell && !isWaiting
+                      ? `2px solid ${subBorder}`
+                      : isLastCell ? "none"
+                      : "1px dashed #e5e7eb";
 
                     return (
                       <div key={i} style={{
                         position: "relative",
-                        borderLeft: isMonday ? "1px solid #d1d5db" : "1px dashed #e5e7eb",
+                        borderRight: subCellBorder,
                         minHeight: 28,
-                        background: (subBar?.overdue && !isWaiting && cellN === subBar.endCol && inSubRange) ? "#FEE2E2"
+                        background: (subBar?.overdue && !isWaiting && isSubDueCell) ? "#FEE2E2"
                           : isT && !inSubRange ? "#f5f3ff" : "transparent",
                       }}>
                         {/* Subtask bar */}
