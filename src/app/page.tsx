@@ -574,11 +574,8 @@ export default function Dashboard() {
       return dates.reduce((a, b) => b > a ? b : a);
     }
 
-    // Show all active parent tasks with a deadline, sorted by closest deadline first
-    const activeParents = parentTasks.filter(t => {
-      if (t.status === "done") return false; // hide completed
-      return effectiveDue(t) !== null;       // must have some deadline
-    });
+    // Show all active parent tasks, sorted by closest deadline first (no deadline → end)
+    const activeParents = parentTasks.filter(t => t.status !== "done");
 
     const sortedParents = [...activeParents].sort((a, b) => {
       const da = effectiveDue(a)?.getTime() ?? Infinity;

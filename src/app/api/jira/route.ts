@@ -285,7 +285,7 @@ export async function GET() {
           estimatedHours: est.hours,
           estimatedDetail: est.detail,
           createdAt: issue.fields.created?.split("T")[0] || "",
-          parentKey: (issue.fields.parent as { key: string } | null)?.key ?? undefined,
+          // allSubParents tasks are always root-level — no parentKey here
         });
       }
     }
