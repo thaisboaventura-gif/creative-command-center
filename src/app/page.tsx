@@ -965,8 +965,11 @@ export default function Dashboard() {
               {days.map((d, i) => {
                 const isT = sameDay(d, today);
                 const cellN = i + 1;
-                const inParentRange = parentBar && cellN >= parentBar.startCol && cellN <= parentBar.endCol;
-                const isDueCell = parentBar && cellN === parentBar.endCol && inParentRange;
+                // Use preview-adjusted start/end for live drag movement
+                const dispStart = parentStartIdx + 1;
+                const dispEnd   = parentEndIdx + 1;
+                const inParentRange = parentBar && cellN >= dispStart && cellN <= dispEnd;
+                const isDueCell = parentBar && cellN === dispEnd && inParentRange;
                 const isDeadlineCell = isDueCell && !allSubsDone;
                 const isAllDoneCell = allDoneColIdx !== null && i === allDoneColIdx;
                 const isLast = i === days.length - 1;
@@ -992,14 +995,14 @@ export default function Dashboard() {
                         onMouseDown={(e) => {
                           if (e.button !== 0 || parentBar.isDone) return;
                           e.preventDefault();
-                          setDragState({ key: parent.id, handle: cellN === parentBar.startCol ? "left" : "right", startX: e.clientX, initialCol: cellN === parentBar.startCol ? parentBar.startCol : parentBar.endCol });
+                          setDragState({ key: parent.id, handle: cellN === dispStart ? "left" : "right", startX: e.clientX, initialCol: cellN === dispStart ? dispStart : dispEnd });
                         }}
                         style={{
                           position: "absolute", top: 4, bottom: 4, left: 0, right: 0,
                           background: ct.bg,
-                          borderRadius: (cellN === parentBar.startCol && !parentBar.startsBefore) && cellN === parentBar.endCol ? "4px"
-                            : (cellN === parentBar.startCol && !parentBar.startsBefore) ? "4px 0 0 4px"
-                            : cellN === parentBar.endCol ? "0 4px 4px 0" : "0",
+                          borderRadius: (cellN === dispStart && !parentBar.startsBefore) && cellN === dispEnd ? "4px"
+                            : (cellN === dispStart && !parentBar.startsBefore) ? "4px 0 0 4px"
+                            : cellN === dispEnd ? "0 4px 4px 0" : "0",
                           opacity: parentBar.isDone ? 0.5 : 1,
                           cursor: parentBar.isDone ? "default" : isBeingDraggedParent ? "grabbing" : "grab",
                         }}
@@ -1040,8 +1043,9 @@ export default function Dashboard() {
               if (isBeingDraggedSub && dragState?.handle === "left") subStartIdx = Math.min(dragPreview!.col, subBar!.endCol) - 1;
               if (isBeingDraggedSub && dragState?.handle === "right") subEndIdx = Math.max(dragPreview!.col, subBar!.startCol) - 1;
 
-              // suppress unused warning
-              void subStartIdx; void subEndIdx;
+              // Display-adjusted columns for live drag preview
+              const dispSubStart = subStartIdx + 1;
+              const dispSubEnd   = subEndIdx + 1;
 
               const isWaiting = sub.status === "in_review";
               const _today2 = new Date(); _today2.setHours(0,0,0,0);
@@ -1111,10 +1115,10 @@ export default function Dashboard() {
                   {days.map((d, i) => {
                     const isT = sameDay(d, today);
                     const cellN = i + 1;
-                    const inSubRange = subBar && cellN >= subBar.startCol && cellN <= subBar.endCol;
-                    const isAfterDue = subBar && !inSubRange && cellN > subBar.endCol;
+                    const inSubRange = subBar && cellN >= dispSubStart && cellN <= dispSubEnd;
+                    const isAfterDue = subBar && !inSubRange && cellN > dispSubEnd;
                     const isOverdueDay = !!subBar?.overdue && !sub.status.includes("done") && !isWaiting;
-                    const isSubDueCell = subBar && cellN === subBar.endCol && inSubRange;
+                    const isSubDueCell = subBar && cellN === dispSubEnd && inSubRange;
                     const isLastCell = i === days.length - 1;
 
                     // ❗ on days after deadline ≤ today (not done, not waiting)
@@ -1144,15 +1148,15 @@ export default function Dashboard() {
                             onMouseDown={(e) => {
                               if (e.button !== 0 || sub.status === "done") return;
                               e.preventDefault();
-                              setDragState({ key: sub.id, handle: cellN === subBar.startCol ? "left" : "right", startX: e.clientX, initialCol: cellN === subBar.startCol ? subBar.startCol : subBar.endCol });
+                              setDragState({ key: sub.id, handle: cellN === dispSubStart ? "left" : "right", startX: e.clientX, initialCol: cellN === dispSubStart ? dispSubStart : dispSubEnd });
                             }}
                             style={{
                               position: "absolute", top: 3, bottom: 3, left: 0, right: 0,
                               background: subBg,
                               borderLeft: cellN === subBar.startCol ? `3px solid ${subBorder}` : undefined,
-                              borderRadius: (cellN === subBar.startCol && !subBar.startsBefore) && cellN === subBar.endCol ? "3px"
-                                : (cellN === subBar.startCol && !subBar.startsBefore) ? "3px 0 0 3px"
-                                : cellN === subBar.endCol ? "0 3px 3px 0" : "0",
+                              borderRadius: (cellN === dispSubStart && !subBar.startsBefore) && cellN === dispSubEnd ? "3px"
+                                : (cellN === dispSubStart && !subBar.startsBefore) ? "3px 0 0 3px"
+                                : cellN === dispSubEnd ? "0 3px 3px 0" : "0",
                               opacity: sub.status === "done" ? 0.7 : 1,
                               cursor: sub.status === "done" ? "default" : isBeingDraggedSub ? "grabbing" : "grab",
                             }}
