@@ -1268,10 +1268,31 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
   monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   monday.setHours(0, 0, 0, 0);
 
+  // Dismiss state — persisted per week, auto-resets next week
+  const weekKey = `incoming_dismissed_${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(weekKey);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  function dismiss(id: string) {
+    setDismissed(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      try { localStorage.setItem(weekKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
+
   // parseLocalDate avoids UTC-parse bug: new Date("2026-06-01") → UTC midnight → Brazil = May 31 21h
-  const thisWeek = items.filter((i) => parseLocalDate(i.createdAt) >= monday);
-  const assigned = thisWeek.filter((i) => i.assignee);
+  const thisWeek = items
+    .filter((i) => parseLocalDate(i.createdAt) >= monday)
+    .filter((i) => !dismissed.has(i.id));
+  const assigned   = thisWeek.filter((i) => i.assignee);
   const unassigned = thisWeek.filter((i) => !i.assignee);
+  const totalDismissed = dismissed.size;
 
   const statusLabel: Record<string, { label: string; color: string; bg: string }> = {
     to_do:       { label: "A fazer",     color: "#6b7280", bg: "#f3f4f6" },
@@ -1298,9 +1319,17 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
             {thisWeek.length}
           </span>
         </div>
-        <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#6b7280" }}>
+        <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#6b7280", alignItems: "center" }}>
           <span>✅ {assigned.length} atribuídas</span>
           <span>⏳ {unassigned.length} sem responsável</span>
+          {totalDismissed > 0 && (
+            <button
+              onClick={() => { setDismissed(new Set()); try { localStorage.removeItem(weekKey); } catch {} }}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 10, color: "#9ca3af", textDecoration: "underline", padding: 0 }}
+            >
+              mostrar {totalDismissed} oculta{totalDismissed > 1 ? "s" : ""}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1360,6 +1389,22 @@ function IncomingPanel({ items }: { items: IncomingItem[] }) {
                 <span style={{ fontSize: 10, color: "#c4b5fd", flexShrink: 0 }}>
                   {fmtH(item.estimatedHours)}
                 </span>
+
+                {/* Dismiss button */}
+                <button
+                  onClick={() => dismiss(item.id)}
+                  title="Ocultar desta lista"
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "#d1d5db", fontSize: 14, lineHeight: 1,
+                    padding: "2px 4px", flexShrink: 0, borderRadius: 4,
+                    transition: "color 0.1s",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = "#ef4444")}
+                  onMouseLeave={e => (e.currentTarget.style.color = "#d1d5db")}
+                >
+                  ✕
+                </button>
               </div>
             );
           })}
