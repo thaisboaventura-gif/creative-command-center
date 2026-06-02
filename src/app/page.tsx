@@ -405,6 +405,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (!dragState) return;
 
+    document.body.style.cursor     = "grabbing";
+    document.body.style.userSelect = "none";
+
     const onMouseMove = (e: MouseEvent) => {
       // ganttBodyRef is the scrollable body — subtract current labelWidth to get day-columns width
       const bodyWidth = ganttBodyRef.current?.offsetWidth ?? 800;
@@ -460,6 +463,8 @@ export default function Dashboard() {
     return () => {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor     = "";
+      document.body.style.userSelect = "";
     };
   }, [dragState, days, team]);
 
@@ -996,7 +1001,7 @@ export default function Dashboard() {
                             : (cellN === parentBar.startCol && !parentBar.startsBefore) ? "4px 0 0 4px"
                             : cellN === parentBar.endCol ? "0 4px 4px 0" : "0",
                           opacity: parentBar.isDone ? 0.5 : 1,
-                          cursor: parentBar.isDone ? "default" : "grab",
+                          cursor: parentBar.isDone ? "default" : isBeingDraggedParent ? "grabbing" : "grab",
                         }}
                       />
                     )}
@@ -1149,7 +1154,7 @@ export default function Dashboard() {
                                 : (cellN === subBar.startCol && !subBar.startsBefore) ? "3px 0 0 3px"
                                 : cellN === subBar.endCol ? "0 3px 3px 0" : "0",
                               opacity: sub.status === "done" ? 0.7 : 1,
-                              cursor: sub.status === "done" ? "default" : "grab",
+                              cursor: sub.status === "done" ? "default" : isBeingDraggedSub ? "grabbing" : "grab",
                             }}
                           />
                         )}
