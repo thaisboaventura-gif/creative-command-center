@@ -332,9 +332,11 @@ export default function Dashboard() {
   }, []);
 
   const days = getTwoWeekDays(page);
-  // Ref so drag effects always read current days.length without stale closure
+  // Refs so drag effects always read current values without stale closure
   const daysRef = useRef(days);
   daysRef.current = days;
+  const labelWidthRef = useRef(labelWidth);
+  labelWidthRef.current = labelWidth;
 
   // Load start overrides from localStorage
   useEffect(() => {
@@ -404,9 +406,10 @@ export default function Dashboard() {
     if (!dragState) return;
 
     const onMouseMove = (e: MouseEvent) => {
-      const containerWidth = barZoneRef.current?.offsetWidth ?? 500;
+      // ganttBodyRef is the scrollable body — subtract current labelWidth to get day-columns width
+      const bodyWidth = ganttBodyRef.current?.offsetWidth ?? 800;
       const numCols = daysRef.current.length;
-      const colWidth = containerWidth / numCols;
+      const colWidth = (bodyWidth - labelWidthRef.current) / numCols;
       const deltaX = e.clientX - dragState.startX;
       const deltaCols = Math.round(deltaX / colWidth);
       let newCol = dragState.initialCol + deltaCols;
@@ -689,12 +692,16 @@ export default function Dashboard() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
               <span style={{ fontSize: 12, color: "#6b7280" }}>Novo prazo:</span>
-              <span style={{
-                fontSize: 13, fontWeight: 700, color: "#111",
-                background: "#f3f4f6", padding: "4px 12px", borderRadius: 8,
-              }}>
-                📅 {fmtDatePT(pendingModal.newDate)}
-              </span>
+              <input
+                type="date"
+                value={pendingModal.newDate}
+                onChange={(e) => setPendingModal(prev => prev ? { ...prev, newDate: e.target.value } : null)}
+                style={{
+                  fontSize: 13, fontWeight: 600, color: "#111",
+                  background: "#f3f4f6", padding: "6px 12px", borderRadius: 8,
+                  border: "1px solid #e5e7eb", cursor: "pointer", outline: "none",
+                }}
+              />
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button
