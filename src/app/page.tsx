@@ -781,7 +781,9 @@ export default function Dashboard() {
                   style={{
                     padding: "8px 2px",
                     textAlign: "center",
-                    borderRight: isT ? "1px solid #c4b5fd" : i < days.length - 1 ? "1px solid #eef0f3" : "none",
+                    borderRight: isT ? "1px solid #c4b5fd"
+                      : (i < days.length - 1 && days[i + 1].getDay() === 1) ? "2px solid #9ca3af"
+                      : i < days.length - 1 ? "1px solid #eef0f3" : "none",
                     background: isT ? "#f5f3ff" : "transparent",
                     position: "relative",
                   }}
@@ -848,7 +850,9 @@ export default function Dashboard() {
           const isLast = i === days.length - 1;
           return (
             <div key={i} style={{
-              borderRight: isT ? "1px solid #c4b5fd" : isLast ? "none" : "1px dashed #e5e7eb",
+              borderRight: isT ? "1px solid #c4b5fd"
+                : (!isLast && days[i + 1].getDay() === 1) ? "2px solid #9ca3af"
+                : isLast ? "none" : "1px dashed #e5e7eb",
               background: isT ? "#f0edff" : "transparent",
             }} />
           );
@@ -955,10 +959,11 @@ export default function Dashboard() {
                 const isAllDoneCell = allDoneColIdx !== null && i === allDoneColIdx;
                 const isLast = i === days.length - 1;
 
+                const isWeekEnd = !isLast && days[i + 1].getDay() === 1;
                 const borderRight = isT
                   ? "1px solid #c4b5fd"
-                  : isDeadlineCell
-                  ? `2px solid ${ct.border}`
+                  : isDeadlineCell ? `2px solid ${ct.border}`
+                  : isWeekEnd ? "2px solid #9ca3af"
                   : isLast ? "none"
                   : "1px dashed #e5e7eb";
 
@@ -1105,10 +1110,11 @@ export default function Dashboard() {
                     // 📦⏳ on due cell when waiting
                     const showWaiting = isSubDueCell && isWaiting;
 
+                    const isSubWeekEnd = !isLastCell && days[i + 1].getDay() === 1;
                     const subCellBorder = isT
                       ? "1px solid #c4b5fd"
-                      : isSubDueCell && !isWaiting
-                      ? `2px solid ${subBorder}`
+                      : isSubDueCell && !isWaiting ? `2px solid ${subBorder}`
+                      : isSubWeekEnd ? "2px solid #9ca3af"
                       : isLastCell ? "none"
                       : "1px dashed #e5e7eb";
 
