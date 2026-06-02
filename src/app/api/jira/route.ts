@@ -88,6 +88,17 @@ function isBrasil(issue: JiraIssue): boolean {
   return !hasAnyCountry;
 }
 
+/** Strict version: only tasks EXPLICITLY marked as Brasil — no fallback for missing country. */
+function isExplicitlyBrasil(issue: JiraIssue): boolean {
+  for (const f of COUNTRY_FIELDS) {
+    const val = issue.fields[f];
+    if (!val) continue;
+    const str = JSON.stringify(val).toLowerCase();
+    if (str.includes("brasil") || str.includes("brazil")) return true;
+  }
+  return false;
+}
+
 async function fetchAllIssues(
   base: string,
   auth: string,
@@ -378,8 +389,8 @@ export async function GET() {
       return (s[a.severity] ?? 2) - (s[b.severity] ?? 2);
     });
 
-    // New demands — filtered by Country=Brasil, up to 200
-    const newDemands = newIssues.filter(isBrasil).slice(0, 200).map((issue) => {
+    // New demands — strictly filtered by Country=Brasil (explicit field only, no fallback)
+    const newDemands = newIssues.filter(isExplicitlyBrasil).slice(0, 200).map((issue) => {
       const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
       return {
         id: issue.key,
