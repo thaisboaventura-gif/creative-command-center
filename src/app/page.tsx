@@ -75,6 +75,19 @@ function getOneWeekDays(offset: number): Date[] {
   });
 }
 
+function getTwoWeekDays(offset: number): Date[] {
+  const now = new Date();
+  const mon = new Date(now);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7);
+  mon.setHours(0, 0, 0, 0);
+  // 10 working days (Mon–Fri × 2 weeks), skipping the weekend between them
+  return Array.from({ length: 10 }, (_, i) => {
+    const d = new Date(mon);
+    d.setDate(mon.getDate() + i + (i >= 5 ? 2 : 0));
+    return d;
+  });
+}
+
 function dayLabel(d: Date): string {
   return ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
 }
@@ -318,7 +331,10 @@ export default function Dashboard() {
     loadJira();
   }, []);
 
-  const days = getOneWeekDays(page);
+  const days = getTwoWeekDays(page);
+  // Ref so drag effects always read current days.length without stale closure
+  const daysRef = useRef(days);
+  daysRef.current = days;
 
   // Load start overrides from localStorage
   useEffect(() => {
@@ -389,11 +405,12 @@ export default function Dashboard() {
 
     const onMouseMove = (e: MouseEvent) => {
       const containerWidth = barZoneRef.current?.offsetWidth ?? 500;
-      const colWidth = containerWidth / 5;
+      const numCols = daysRef.current.length;
+      const colWidth = containerWidth / numCols;
       const deltaX = e.clientX - dragState.startX;
       const deltaCols = Math.round(deltaX / colWidth);
       let newCol = dragState.initialCol + deltaCols;
-      newCol = Math.max(1, Math.min(5, newCol));
+      newCol = Math.max(1, Math.min(numCols, newCol));
       const dp = { key: dragState.key, col: newCol };
       dragPreviewRef.current = dp;
       setDragPreview(dp);
@@ -594,7 +611,7 @@ export default function Dashboard() {
   const now = Date.now();
   // todayMidnight: para comparação de prazo — só é "em atraso" se passou do dia (< midnight de hoje)
   const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
-  const GRID_COLS = `${labelWidth}px repeat(5, 1fr)`;
+  const GRID_COLS = `${labelWidth}px repeat(${days.length}, 1fr)`;
 
   const order = ["eduardo", "lucas", "joao", "beatriz", "larissa", "francisco"];
   const sorted = [...team].sort((a, b) => {
@@ -852,8 +869,8 @@ export default function Dashboard() {
         const isBeingDraggedParent = dragPreview?.key === parent.id;
         if (isBeingDraggedParent && dragState?.handle === "left") parentStartIdx = Math.min(dragPreview!.col, parentBar!.endCol) - 1;
         if (isBeingDraggedParent && dragState?.handle === "right") parentEndIdx = Math.max(dragPreview!.col, parentBar!.startCol) - 1;
-        const parentLeftPct  = parentBar ? (parentStartIdx / 5) * 100 : 0;
-        const parentWidthPct = parentBar ? ((parentEndIdx - parentStartIdx + 1) / 5) * 100 : 0;
+        const parentLeftPct  = parentBar ? (parentStartIdx / days.length) * 100 : 0;
+        const parentWidthPct = parentBar ? ((parentEndIdx - parentStartIdx + 1) / days.length) * 100 : 0;
 
         // All subs done → find latest delivery date column
         const allSubsDone = children.length > 0 && children.every(c => c.status === "done");
