@@ -288,9 +288,10 @@ export default function Dashboard() {
   const [taskOrders, setTaskOrders] = useState<Record<string, string[]>>({});
   const [vertDrag, setVertDrag] = useState<{ memberName: string; taskId: string; fromIdx: number } | null>(null);
   const [vertDropIdx, setVertDropIdx] = useState<{ memberName: string; idx: number } | null>(null);
-  const barZoneRefs    = useRef<Map<string, HTMLDivElement>>(new Map());
-  const vertDropIdxRef = useRef<{ memberName: string; idx: number } | null>(null);
-  const rowsRef        = useRef<Array<{ member: MemberItem; bars: Bar[] }>>([]);
+  const barZoneRefs       = useRef<Map<string, HTMLDivElement>>(new Map());
+  const memberSectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const vertDropIdxRef    = useRef<{ memberName: string; idx: number } | null>(null);
+  const rowsRef           = useRef<Array<{ member: MemberItem; bars: Bar[] }>>([]);
   const [dragState, setDragState] = useState<{
     key: string;
     handle: "left" | "right";
@@ -484,12 +485,13 @@ export default function Dashboard() {
     document.body.style.userSelect = "none";
 
     const onMouseMove = (e: MouseEvent) => {
-      const el = barZoneRefs.current.get(vertDrag.memberName);
+      const el = memberSectionRefs.current.get(vertDrag.memberName);
       if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const relY  = e.clientY - rect.top - 10; // 10px top padding
-      const idx   = Math.max(0, Math.round(relY / 32));
-      const dp    = { memberName: vertDrag.memberName, idx };
+      const rect   = el.getBoundingClientRect();
+      const relY   = e.clientY - rect.top;
+      const ROW_H  = 32; // parent task row height in px
+      const idx    = Math.max(0, Math.round(relY / ROW_H));
+      const dp     = { memberName: vertDrag.memberName, idx };
       vertDropIdxRef.current = dp;
       setVertDropIdx(dp);
     };
@@ -506,9 +508,9 @@ export default function Dashboard() {
 
       const rowData = rowsRef.current.find(r => r.member.name === drag.memberName);
       if (!rowData) return;
-      const numBars = rowData.bars.length;
-      const toIdx   = Math.min(numBars, drop.idx);
-      const fromIdx = drag.fromIdx;
+      const numItems = rowData.bars.length;
+      const toIdx    = Math.min(numItems, drop.idx);
+      const fromIdx  = drag.fromIdx;
       if (toIdx === fromIdx || toIdx === fromIdx + 1) return;
 
       const ids   = rowData.bars.map(b => b.task.id);
@@ -672,16 +674,29 @@ export default function Dashboard() {
     // Hide done tasks (Backlog already excluded at API level via JQL)
     const activeParents = parentTasks.filter(t => t.status !== "done");
 
-    const sortedParents = [...activeParents].sort((a, b) => {
+    const sortedByDeadline = [...activeParents].sort((a, b) => {
       const da = effectiveDue(a)?.getTime() ?? Infinity;
       const db = effectiveDue(b)?.getTime() ?? Infinity;
       return da - db;
     });
 
+    // Apply saved custom order (drag-and-drop reordering)
+    const customOrder = taskOrders[m.name] ?? [];
+    const orderedParents = customOrder.length > 0
+      ? [
+          ...customOrder.map(id => sortedByDeadline.find(t => t.id === id)).filter(Boolean) as TaskItem[],
+          ...sortedByDeadline.filter(t => !customOrder.includes(t.id)),
+        ]
+      : sortedByDeadline;
+
     const backlog = m.tasks.filter(t => !t.dueDate && t.status !== "done").length;
-    return { member: m, cfg, areaC, orderedParents: sortedParents, childMap, backlog };
+    return { member: m, cfg, areaC, orderedParents, childMap, backlog };
   });
-  rowsRef.current = []; // reset (vertical reorder refs no longer needed in new layout)
+  // Store parent task ids per member so vertical drag can reorder them
+  rowsRef.current = rows.map(r => ({
+    member: r.member,
+    bars: r.orderedParents.map(p => ({ task: p } as unknown as Bar)),
+  }));
 
   if (src === "loading") return <Shell><p style={{ color: "#9ca3af", textAlign: "center", padding: 80 }}>Conectando ao Jira...</p></Shell>;
   if (src === "err") return <Shell><p style={{ color: "#dc2626", textAlign: "center", padding: 80 }}>Erro ao conectar. Recarregue.</p></Shell>;
@@ -888,6 +903,13 @@ export default function Dashboard() {
       </div>
 
       {/* ── Task hierarchy ── */}
+      <div
+        ref={(el) => {
+          if (el) memberSectionRefs.current.set(member.name, el);
+          else memberSectionRefs.current.delete(member.name);
+        }}
+        style={{ position: "relative" }}
+      >
       {orderedParents.map((parent, pIdx) => {
         const ct = PALETTE[pIdx % PALETTE.length];
         const parentBars = layoutBars([parent], days, startOverrides);
@@ -926,20 +948,52 @@ export default function Dashboard() {
         // suppress unused warning
         void parentLeftPct; void parentWidthPct;
 
+        const isVertDraggingThis = vertDrag?.taskId === parent.id;
+        const showDropBefore = vertDropIdx?.memberName === member.name && vertDropIdx.idx === pIdx;
+        const showDropAfter  = vertDropIdx?.memberName === member.name && vertDropIdx.idx === pIdx + 1
+          && pIdx === orderedParents.length - 1;
+
         return (
           <div key={parent.key}>
+            {/* Drop indicator ABOVE this row */}
+            {showDropBefore && (
+              <div style={{ height: 2, background: "#7c3aed", borderRadius: 1, margin: "0 0" }} />
+            )}
             {/* Parent task row */}
             <div style={{
               display: "grid", gridTemplateColumns: GRID_COLS,
               borderBottom: "1px solid #e9ecef",
               minHeight: 32,
               background: hexToRgba(ct.bg, 0.15),
+              opacity: isVertDraggingThis ? 0.35 : 1,
+              transition: "opacity 0.1s",
             }}>
               {/* Label cell */}
               <div style={{
                 padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`,
                 display: "flex", alignItems: "center", gap: 4, minWidth: 0,
               }}>
+                {/* Vertical reorder handle */}
+                <div
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setVertDrag({ memberName: member.name, taskId: parent.id, fromIdx: pIdx });
+                    vertDropIdxRef.current = { memberName: member.name, idx: pIdx };
+                    setVertDropIdx({ memberName: member.name, idx: pIdx });
+                  }}
+                  title="Arrastar para reordenar"
+                  style={{
+                    cursor: "ns-resize", flexShrink: 0,
+                    display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center",
+                    gap: 2, height: 14, padding: "0 2px",
+                  }}
+                >
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{ width: 8, height: 1.5, background: ct.subtleText + "80", borderRadius: 1 }} />
+                  ))}
+                </div>
                 {children.length > 0 && (
                   <button onClick={() => toggleMainCollapsed(parent.key)}
                     style={{ background: "none", border: "none", cursor: "pointer",
@@ -1218,9 +1272,15 @@ export default function Dashboard() {
           </div>
         );
       })}
+      {/* Drop indicator at end of member's section */}
+      {vertDropIdx?.memberName === member.name && vertDropIdx.idx >= orderedParents.length && (
+        <div style={{ height: 2, background: "#7c3aed", borderRadius: 1 }} />
+      )}
+      </div>{/* end memberSectionRefs wrapper */}
     </div>
   );
 })}
+
           </div>{/* end minWidth body */}
         </div>{/* end ganttBodyRef scroll div */}
       </div>{/* end gantt card */}
