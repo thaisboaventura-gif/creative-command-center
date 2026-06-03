@@ -210,7 +210,7 @@ export async function GET() {
     const missingKeys = [...subParentMap.keys()].filter((k) => !boardKeys.has(k));
     console.log("[jira] missingParentKeys:", missingKeys);
     const extraParents: JiraIssue[] = missingKeys.length
-      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")})`, 1)
+      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND status not in (Done, Backlog)`, 1)
       : [];
 
     // Build team map
@@ -274,6 +274,9 @@ export async function GET() {
     for (const issue of allSubParents) {
       const assigneeNames = subParentMap.get(issue.key);
       if (!assigneeNames) continue;
+      // Skip parent tasks that are in Backlog or Done
+      const rawStatus = (issue.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
+      if (rawStatus === "backlog" || rawStatus.includes("done") || rawStatus.includes("conclu")) continue;
 
       for (const name of assigneeNames) {
         if (!teamMap.has(name)) {
