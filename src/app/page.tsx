@@ -543,22 +543,38 @@ export default function Dashboard() {
 
   async function confirmDeadline() {
     if (!pendingModal) return;
-    // Push undo before API call
+    const { key, newDate, prevDate } = pendingModal;
+
+    // Push undo before applying change
     undoStackRef.current = [
       ...undoStackRef.current,
-      { type: "deadline", key: pendingModal.key, prevDate: pendingModal.prevDate },
+      { type: "deadline", key, prevDate },
     ];
+
+    // Optimistic update — reflect new date in local state immediately
+    setTeam(prev => prev.map(member => ({
+      ...member,
+      tasks: member.tasks.map(t =>
+        t.key === key ? { ...t, dueDate: newDate } : t
+      ),
+    })));
+    setPendingModal(null);
+
     const res = await fetch("/api/jira/update-deadline", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ issueKey: pendingModal.key, newDate: pendingModal.newDate }),
+      body: JSON.stringify({ issueKey: key, newDate }),
     });
-    if (res.ok) {
-      setPendingModal(null);
-      setSrc("loading");
-      loadJira();
-    } else {
-      undoStackRef.current = undoStackRef.current.slice(0, -1); // rollback push on error
+
+    if (!res.ok) {
+      // Rollback optimistic update on error
+      undoStackRef.current = undoStackRef.current.slice(0, -1);
+      setTeam(prev => prev.map(member => ({
+        ...member,
+        tasks: member.tasks.map(t =>
+          t.key === key ? { ...t, dueDate: prevDate } : t
+        ),
+      })));
       const data = await res.json().catch(() => ({ error: "Erro desconhecido" }));
       alert(`Erro ao atualizar prazo: ${data.error}`);
     }
