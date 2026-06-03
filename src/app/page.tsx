@@ -653,13 +653,8 @@ export default function Dashboard() {
       return dates.reduce((a, b) => b > a ? b : a);
     }
 
-    // Hide done tasks AND backlog (to_do with no effective deadline — unscheduled)
-    const activeParents = parentTasks.filter(t => {
-      if (t.status === "done") return false;
-      // Backlog = to_do with no deadline on the task or any of its children
-      if (t.status === "to_do" && effectiveDue(t) === null) return false;
-      return true;
-    });
+    // Hide done tasks (Backlog already excluded at API level via JQL)
+    const activeParents = parentTasks.filter(t => t.status !== "done");
 
     const sortedParents = [...activeParents].sort((a, b) => {
       const da = effectiveDue(a)?.getTime() ?? Infinity;

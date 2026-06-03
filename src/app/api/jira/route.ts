@@ -145,13 +145,13 @@ export async function GET() {
 
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
-    const boardJql = `project = ${project} AND status != Done AND assignee IS NOT EMPTY ORDER BY updated DESC`;
+    const boardJql = `project = ${project} AND status != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
     // Query 3: active subtasks assigned to any team member — used to pull in
     // parent tasks where the team member is only at subtask level.
-    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done`;
+    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done AND status != Backlog`;
     // Query 4: tasks created by Thais with no assignee yet — "waiting for distribution"
-    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND status != Done ORDER BY created DESC`;
+    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND status != Done AND status != Backlog ORDER BY created DESC`;
 
     const [boardIssues, newIssues, teamSubsRaw, thaisUnassigned] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
