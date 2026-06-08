@@ -27,7 +27,9 @@ function isTeamMember(displayName: string): boolean {
 
 function mapStatus(name: string): string {
   const l = name.toLowerCase();
-  if (l.includes("done") || l.includes("conclu") || l.includes("finaliz"))
+  if (l.includes("done") || l.includes("conclu") || l.includes("finaliz") ||
+      l.includes("entregue") || l.includes("resolv") || l.includes("closed") ||
+      l.includes("encerr") || l.includes("complet"))
     return "done";
   if (
     l.includes("review") || l.includes("revis") ||
@@ -145,13 +147,13 @@ export async function GET() {
 
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
-    const boardJql = `project = ${project} AND status != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
+    // statusCategory = Done covers ALL done statuses regardless of name (Done, Entregue, Concluído, etc.)
+    const boardJql = `project = ${project} AND statusCategory != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
-    // Query 3: active subtasks assigned to any team member — used to pull in
-    // parent tasks where the team member is only at subtask level.
-    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND status != Done AND status != Backlog`;
-    // Query 4: tasks created by Thais with no assignee yet — "waiting for distribution"
-    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND status != Done AND status != Backlog ORDER BY created DESC`;
+    // Query 3: active subtasks assigned to any team member
+    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory != Done AND status != Backlog`;
+    // Query 4: tasks created by Thais with no assignee yet
+    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status != Backlog ORDER BY created DESC`;
 
     const [boardIssues, newIssues, teamSubsRaw, thaisUnassigned] = await Promise.all([
       fetchAllIssues(base, auth, boardJql, 6),
@@ -210,7 +212,7 @@ export async function GET() {
     const missingKeys = [...subParentMap.keys()].filter((k) => !boardKeys.has(k));
     console.log("[jira] missingParentKeys:", missingKeys);
     const extraParents: JiraIssue[] = missingKeys.length
-      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND status not in (Done, Backlog)`, 1)
+      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND statusCategory != Done AND status != Backlog`, 1)
       : [];
 
     // Build team map
@@ -274,9 +276,12 @@ export async function GET() {
     for (const issue of allSubParents) {
       const assigneeNames = subParentMap.get(issue.key);
       if (!assigneeNames) continue;
-      // Skip parent tasks that are in Backlog or Done
+      // Skip parent tasks that are in Backlog or any Done-category status
       const rawStatus = (issue.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
-      if (rawStatus === "backlog" || rawStatus.includes("done") || rawStatus.includes("conclu")) continue;
+      const statusCat = ((issue.fields.status as { statusCategory?: { key?: string } } | null)?.statusCategory?.key ?? "").toLowerCase();
+      if (rawStatus === "backlog" || statusCat === "done" ||
+          rawStatus.includes("done") || rawStatus.includes("conclu") || rawStatus.includes("entregue") ||
+          rawStatus.includes("finaliz") || rawStatus.includes("resolv") || rawStatus.includes("closed")) continue;
 
       for (const name of assigneeNames) {
         if (!teamMap.has(name)) {
