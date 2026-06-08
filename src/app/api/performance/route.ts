@@ -163,7 +163,7 @@ export async function GET(req: Request) {
     const EDUARDO_ACCOUNT_ID = "712020:4648823a-0cdc-4178-b186-597098121542";
 
     // Query 1: active tasks for the performance team (any status)
-    const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -90d ORDER BY updated DESC`;
+    const jql1 = `project = ${project} AND (reporter in (${reporters}) OR assignee in (${assignees})) AND updated >= -180d ORDER BY updated DESC`;
 
     // Query 2: Done parent tasks for the performance team this year.
     // Uses reporter OR assignee so tasks created by PMMs but done by the team are included.
@@ -174,7 +174,7 @@ export async function GET(req: Request) {
 
     // Query 3: active subtasks assigned to Eduardo — used to pull in parent tasks
     // where Eduardo is only present at subtask level (not parent assignee).
-    const jql3 = `project = ${project} AND issuetype = Subtask AND assignee = "${EDUARDO_ACCOUNT_ID}" AND status != Done`;
+    const jql3 = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee = "${EDUARDO_ACCOUNT_ID}" AND statusCategory != Done`;
 
     // Run all three queries in parallel, then merge (deduplicate by key)
     const [raw1, raw2, eduSubs] = await Promise.all([

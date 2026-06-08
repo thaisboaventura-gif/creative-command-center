@@ -1036,11 +1036,7 @@ export default function PerformanceDashboard() {
 
           const subEmoji: string | null = !isParent ? (() => {
             if (!bar && !isGloballyOverdue) return null;
-            // 📦 on resolved/due date when done
-            if (bar?.isDone) {
-              if (isResolvedCell) return "📦";
-              if (isDueCell && !subResolvedAtCol) return "📦";
-            }
+            // 📦 removed — deadline label already shows "✅ · DD/M" for done cells (no overlap)
             // 📦⏳ handled separately as waiting-feedback cell
             // ❗ when overdue after deadline, ≤ today
             // Case A: deadline in this window → after due date
