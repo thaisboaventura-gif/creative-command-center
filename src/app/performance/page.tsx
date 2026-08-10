@@ -36,7 +36,7 @@ const PROJECT_PALETTE = PALETTE.map((e) => e.bg);
 
 const STATUS_LABEL: Record<string, string> = {
   done:        "✅ Entregue",
-  in_review:   "⏳ Aguardando",
+  in_review:   "⏳ Entr. p/ feedb.",
   in_progress: "🔵 Em andamento",
   to_do:       "⚪ A fazer",
 };
@@ -112,7 +112,11 @@ const PERSON_CAP: Record<string, number> = {
   joao: 5.5,
   beatriz: 5.5,
   rafa: 8,
+  gaspareto: 8,
 };
+
+/** Members always shown in the Gantt even without active tasks */
+const STATIC_MEMBERS = ["Eduardo Gaspareto"];
 
 function normFirst(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ")[0];
@@ -1320,7 +1324,7 @@ export default function PerformanceDashboard() {
         </h1>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {/* View toggle */}
+          {/* View toggle + navigation */}
           <div style={{ display: "flex", background: "#f3f4f6", borderRadius: 8, padding: 2 }}>
             {(["week", "month"] as View[]).map((v) => (
               <button key={v} onClick={() => { setView(v); setOffset(0); }}
@@ -1344,7 +1348,6 @@ export default function PerformanceDashboard() {
         </div>
       </div>
 
-      {/* ── Debug panel — remove when section is confirmed working ── */}
       {/* ── Add by ticket ── */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
         <input
@@ -1484,6 +1487,31 @@ export default function PerformanceDashboard() {
           {perfDropIdx === orderedVisibleActive.length && perfVertDrag && (
             <div style={{ height: 2, background: "#7c3aed", margin: 0 }} />
           )}
+
+          {/* Static members with no active tasks */}
+          {STATIC_MEMBERS.filter((name) =>
+            !orderedVisibleActive.some((t) =>
+              t.assignee === name ||
+              t.subtasks.some((st) => st.assignee === name)
+            )
+          ).map((name) => (
+            <div key={name} style={{
+              display: "grid",
+              gridTemplateColumns: GRID_COLS,
+              borderBottom: "1px solid #f3f4f6",
+              minHeight: 32,
+              background: "transparent",
+              opacity: 0.55,
+            }}>
+              <div style={{ padding: "0 8px", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 500 }}>{name}</span>
+                <span style={{ fontSize: 10, color: "#d1d5db", fontStyle: "italic" }}>sem demandas</span>
+              </div>
+              {days.map((_, i) => (
+                <div key={i} style={{ borderRight: "1px dashed #f3f4f6", minHeight: 32 }} />
+              ))}
+            </div>
+          ))}
           </div>{/* end width:100% body */}
         </div>{/* end ganttContainerRef scroll div */}
       </div>{/* end gantt card */}
@@ -1493,7 +1521,7 @@ export default function PerformanceDashboard() {
         {[
           { color: "#fecaca", label: "Em atraso ⚠️", textColor: "#b91c1c" },
           { color: "#fbbf24", label: "Entrega hoje 📅" },
-          { color: "#fbcfe8", label: "Aguardando ⏳" },
+          { color: "#fbcfe8", label: "Entr. p/ feedb. ⏳" },
           { color: "#9ca3af", label: "Entregue ✅" },
           { color: "#5b6cff", label: "Em andamento" },
         ].map(({ color, label, textColor }) => (
