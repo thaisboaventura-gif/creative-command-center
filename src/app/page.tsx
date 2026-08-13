@@ -266,7 +266,7 @@ function statusChipProps(status: string, isOverdue: boolean): { label: string; b
   if (isOverdue) return { label: "⚠️ Em atraso",    bg: "#fee2e2", color: "#991b1b" };
   const map: Record<string, { label: string; bg: string; color: string }> = {
     done:        { label: "✅ Entregue",      bg: "#f3f4f6", color: "#6b7280" },
-    in_review:   { label: "⏳ Aguardando",    bg: "#fff7ed", color: "#c2410c" },
+    in_review:   { label: "⏳ Entr. p/ feedb.", bg: "#fff7ed", color: "#c2410c" },
     in_progress: { label: "🔵 Em andamento",  bg: "#eff6ff", color: "#1d4ed8" },
     to_do:       { label: "⚪ A fazer",        bg: "#f9fafb", color: "#9ca3af" },
   };
@@ -280,6 +280,7 @@ export default function Dashboard() {
   const [incoming, setIncoming] = useState<IncomingItem[]>([]);
   const [src, setSrc] = useState<"loading" | "ok" | "err">("loading");
   const [page, setPage] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ── Drag-resize state ──
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
@@ -318,14 +319,16 @@ export default function Dashboard() {
     | { type: "deadline"; key: string; prevDate: string | null };
   const undoStackRef = useRef<UndoAction[]>([]);
 
-  function loadJira() {
+  function loadJira(refresh = false) {
+    if (refresh) setIsRefreshing(true);
     fetch("/api/jira")
       .then((r) => r.json())
       .then((d) => {
         if (d.team?.length) { setTeam(d.team); setSrc("ok"); } else setSrc("err");
         if (d.newDemands?.length) setIncoming(d.newDemands);
       })
-      .catch(() => setSrc("err"));
+      .catch(() => setSrc("err"))
+      .finally(() => setIsRefreshing(false));
   }
 
   useEffect(() => {
@@ -772,7 +775,11 @@ export default function Dashboard() {
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <a href="/performance" style={{ background: "#0ea5e9", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>📊 Performance</a>
+          <a href="/d2c" style={{ background: "#1d4ed8", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>🛍️ D2C</a>
           <a href="/nova-demanda" style={{ background: "#7c3aed", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>+ Nova demanda</a>
+          <Btn onClick={() => loadJira(true)} disabled={isRefreshing}>
+            {isRefreshing ? "↻ Atualizando…" : "↻ Atualizar"}
+          </Btn>
           <Btn onClick={() => setPage((p) => p - 1)}>← 1 sem</Btn>
           <Btn onClick={() => setPage((p) => p + 1)}>1 sem →</Btn>
           {page !== 0 && <Btn onClick={() => setPage(0)}>Hoje</Btn>}
@@ -1330,9 +1337,9 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Btn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function Btn({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
   return (
-    <button onClick={onClick} style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "#374151" }}>
+    <button onClick={onClick} disabled={disabled} style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 10px", cursor: disabled ? "not-allowed" : "pointer", fontSize: 12, color: disabled ? "#9ca3af" : "#374151", opacity: disabled ? 0.6 : 1 }}>
       {children}
     </button>
   );
