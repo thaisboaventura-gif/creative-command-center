@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { AgendaTask, AgendaResponse, DaySlot, TeamMember } from "@/app/api/agenda/route";
+import type { AgendaTask, AgendaResponse, DaySlot, TeamMember } from "@/lib/agenda";
 
 /* ─── Constants ─── */
 
