@@ -590,11 +590,14 @@ export async function POST(req: Request) {
     if (forceUnassigned) {
       if (issueKey) {
         const basicPlans = planSubtasks(derivedTipos, descBlob, prazo, {
-          eduardo: { daily: new Map() },
-          larissa: { daily: new Map() },
-          joao:    { daily: new Map() },
-          beatriz: { daily: new Map() },
-          rafa:    { daily: new Map() },
+          eduardo:    { daily: new Map() },
+          gasparetto: { daily: new Map() },
+          gabriel:    { daily: new Map() },
+          larissa:    { daily: new Map() },
+          francisco:  { daily: new Map() },
+          joao:       { daily: new Map() },
+          beatriz:    { daily: new Map() },
+          rafa:       { daily: new Map() },
         });
         for (const plan of basicPlans) {
           const st = await createJiraIssue(

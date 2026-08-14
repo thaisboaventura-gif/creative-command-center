@@ -14,19 +14,25 @@
 import { estimateHours } from "./estimate";
 
 export const DAILY_CAPACITY: Record<string, number> = {
-  eduardo: 13.5,
-  larissa: 13.5,
-  joao:    5.5,
-  beatriz: 5.5,
-  rafa:    8,
+  eduardo:    6.5,
+  gasparetto: 6.5,
+  gabriel:    6.5,
+  larissa:    10.5,
+  francisco:  6.5,
+  joao:       6.5,
+  beatriz:    6.5,
+  rafa:       8,
 };
 
 export const PERSON_DISPLAY: Record<string, string> = {
-  eduardo: "Eduardo",
-  larissa: "Larissa",
-  joao:    "João",
-  beatriz: "Beatriz",
-  rafa:    "Rafa",
+  eduardo:    "Eduardo",
+  gasparetto: "Gasparetto",
+  gabriel:    "Gabriel",
+  larissa:    "Larissa",
+  francisco:  "Francisco",
+  joao:       "João",
+  beatriz:    "Beatriz",
+  rafa:       "Rafa",
 };
 
 export interface PipelineLoad {

@@ -6,23 +6,29 @@ export const maxDuration = 60;
 
 /* ─── Team config ─── */
 
-const INTERNAL_NAMES  = ["eduardo", "joao", "beatriz", "larissa", "rafa"];
-const INTERNAL_EMAILS = ["rafaela.ceragioli"];
+const INTERNAL_NAMES  = ["eduardo", "gasparetto", "gabriel", "cassino", "joao", "beatriz", "larissa", "francisco", "rafa"];
+const INTERNAL_EMAILS = ["rafaela.ceragioli", "eduardo.gasparetto", "gabriel.cassino", "francisco.fernandes"];
 
 const DAILY_CAPACITY: Record<string, number> = {
-  eduardo: 13.5,
-  larissa: 13.5,
-  joao:    5.5,
-  beatriz: 5.5,
-  rafa:    8,
+  eduardo:    6.5,
+  gasparetto: 6.5,
+  gabriel:    6.5,
+  larissa:    10.5,
+  francisco:  6.5,
+  joao:       6.5,
+  beatriz:    6.5,
+  rafa:       8,
 };
 
 const PERSON_DISPLAY: Record<string, string> = {
-  eduardo: "Eduardo",
-  larissa: "Larissa",
-  joao:    "João",
-  beatriz: "Beatriz",
-  rafa:    "Rafa",
+  eduardo:    "Eduardo",
+  gasparetto: "Gasparetto",
+  gabriel:    "Gabriel",
+  larissa:    "Larissa",
+  francisco:  "Francisco",
+  joao:       "João",
+  beatriz:    "Beatriz",
+  rafa:       "Rafa",
 };
 
 const PRESENTATION_KEYWORDS = [
@@ -229,18 +235,22 @@ interface BriefingAnalysis {
 const ANALYSIS_SYSTEM = `Você lê briefings criativos do time de Brand Creative da Nuvemshop e determina quais subtasks criar. Nunca questiona nada — sempre cria.
 
 RESPONSÁVEIS POR TIPO:
-- beatriz  → copy, texto, conteúdo escrito
-- eduardo  → performance, anúncios, growth, banners, estáticos, layout de vídeo
-- larissa  → motion, animação, after effects
-- joao     → sinalização, eventos, stands, produto/demo
+- beatriz    → copy, texto, conteúdo escrito
+- eduardo    → anúncios/performance, banners, estáticos, layout de vídeo, motion
+- gasparetto → EnP (Eventos e Projetos), workshops, experiências, sinalização de eventos
+- gabriel    → anúncios/performance (overflow), estáticos
+- larissa    → motion, animação, after effects, gravação (quando francisco indisponível)
+- francisco  → gravação, vídeo (câmera/direção)
+- joao       → sinalização, produto/demo, design de interiores, stands
 
 SUBTASKS A CRIAR (baseado no que o briefing pede):
-- COPY            → pessoa: beatriz  — quando tiver copy/texto estratégico
-- LAYOUT ESTÁTICOS → pessoa: eduardo — quando tiver peças estáticas (posts, banners, cards, stories)
-- LAYOUT VÍDEOS   → pessoa: eduardo — quando tiver vídeo que precisa de layout antes do motion
-- MOTION          → pessoa: larissa  — quando tiver animação/motion/after effects
-- SINALIZAÇÃO     → pessoa: joao    — quando tiver material de evento/stand/sinalização
-- PRODUTO/DEMO    → pessoa: joao    — quando tiver produto ou demo
+- COPY             → pessoa: beatriz     — quando tiver copy/texto estratégico
+- LAYOUT ESTÁTICOS → pessoa: eduardo     — quando tiver peças estáticas (posts, banners, cards, stories)
+- LAYOUT VÍDEOS    → pessoa: eduardo     — quando tiver vídeo que precisa de layout antes do motion
+- MOTION           → pessoa: larissa     — quando tiver animação/motion/after effects
+- GRAVAÇÃO         → pessoa: francisco   — quando tiver gravação de vídeo; mencionar @larissa.delarue no comentário
+- SINALIZAÇÃO      → pessoa: gasparetto  — quando tiver material EnP/eventos/workshops
+- SINALIZAÇÃO      → pessoa: joao        — quando tiver sinalização física/stands/produto/demo
 
 ESTIMATIVA DE HORAS:
 - COPY:             0.75h por estático + 0.5h por vídeo (mínimo 1h)

@@ -18,7 +18,7 @@ interface JiraIssue {
   };
 }
 
-const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli"];
+const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli", "gasparetto", "gabriel", "cassino"];
 
 function isTeamMember(displayName: string): boolean {
   const lower = displayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -75,7 +75,9 @@ const FIELDS = [
 
 // Jira usernames used for the subtask-assignee lookup
 const TEAM_USERNAMES = [
-  "eduardo.oliveira", "larissa.delarue", "joao.camargo", "beatriz", "rafaela.ceragioli", "francisco",
+  "eduardo.oliveira", "eduardo.gasparetto", "larissa.delarue", "joao.camargo",
+  "beatriz", "rafaela.ceragioli", "francisco.fernandes",
+  // gabriel.cassino sem conta Jira ainda — não entra no JQL
 ];
 
 function isBrasil(issue: JiraIssue): boolean {

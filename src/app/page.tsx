@@ -39,12 +39,14 @@ const JIRA = "https://tiendanube.atlassian.net/browse";
 /* ── Team config ── */
 
 const TEAM: Record<string, { role: string; area: string; dailyH: number; hasFreela: boolean }> = {
-  eduardo: { role: "Design", area: "design", dailyH: 5.5, hasFreela: true },
-  lucas: { role: "Design", area: "design", dailyH: 5.5, hasFreela: false },
-  joao: { role: "Design", area: "design", dailyH: 5.5, hasFreela: false },
-  beatriz: { role: "Copy", area: "copy", dailyH: 5.5, hasFreela: false },
-  larissa: { role: "Motion & Vídeo", area: "motion", dailyH: 5.5, hasFreela: true },
-  francisco: { role: "Motion & Vídeo", area: "motion", dailyH: 5.5, hasFreela: false },
+  eduardo:    { role: "Design + Motion",  area: "design",  dailyH: 6.5,  hasFreela: false },
+  gasparetto: { role: "Design (EnP)",     area: "design",  dailyH: 6.5,  hasFreela: false },
+  gabriel:    { role: "Design",           area: "design",  dailyH: 6.5,  hasFreela: false },
+  joao:       { role: "Sinalização",      area: "design",  dailyH: 6.5,  hasFreela: false },
+  beatriz:    { role: "Copy",             area: "copy",    dailyH: 6.5,  hasFreela: false },
+  larissa:    { role: "Motion & Vídeo",   area: "motion",  dailyH: 10.5, hasFreela: true  },
+  francisco:  { role: "Audiovisual",      area: "motion",  dailyH: 6.5,  hasFreela: false },
+  rafa:       { role: "Overflow (Monstra)",area: "design", dailyH: 8,    hasFreela: false },
 };
 
 function getConfig(name: string) {
@@ -642,7 +644,7 @@ export default function Dashboard() {
   const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
   const GRID_COLS = `${labelWidth}px repeat(${days.length}, 1fr)`;
 
-  const order = ["eduardo", "lucas", "joao", "beatriz", "larissa", "francisco"];
+  const order = ["eduardo", "gasparetto", "gabriel", "joao", "beatriz", "larissa", "francisco", "rafa"];
   const sorted = [...team].sort((a, b) => {
     const ka = firstName(a.name).toLowerCase();
     const kb = firstName(b.name).toLowerCase();
@@ -774,6 +776,7 @@ export default function Dashboard() {
           Creative Command Center
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <a href="/agenda" style={{ background: "#059669", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>📅 Agenda</a>
           <a href="/performance" style={{ background: "#0ea5e9", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>📊 Performance</a>
           <a href="/d2c" style={{ background: "#1d4ed8", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>🛍️ D2C</a>
           <a href="/nova-demanda" style={{ background: "#7c3aed", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>+ Nova demanda</a>

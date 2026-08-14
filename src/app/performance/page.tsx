@@ -106,17 +106,19 @@ function shortDate(d: Date) { return `${d.getDate()}/${d.getMonth() + 1}`; }
 
 /** Daily capacity per team member (hours) */
 const PERSON_CAP: Record<string, number> = {
-  eduardo: 13.5,
-  larissa: 13.5,
-  joão: 5.5,
-  joao: 5.5,
-  beatriz: 5.5,
-  rafa: 8,
-  gaspareto: 8,
+  eduardo:    6.5,
+  gasparetto: 6.5,
+  gabriel:    6.5,
+  larissa:    10.5,
+  francisco:  6.5,
+  joão:       6.5,
+  joao:       6.5,
+  beatriz:    6.5,
+  rafa:       8,
 };
 
 /** Members always shown in the Gantt even without active tasks */
-const STATIC_MEMBERS = ["Eduardo Gaspareto"];
+const STATIC_MEMBERS = ["Gabriel Cassino"];
 
 function normFirst(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ")[0];

@@ -97,12 +97,15 @@ function shortDate(d: Date) { return `${d.getDate()}/${d.getMonth() + 1}`; }
 /* ─── Gantt helpers ─── */
 
 const PERSON_CAP: Record<string, number> = {
-  eduardo: 13.5,
-  larissa: 13.5,
-  joão: 5.5,
-  joao: 5.5,
-  beatriz: 5.5,
-  rafa: 8,
+  eduardo:    6.5,
+  gasparetto: 6.5,
+  gabriel:    6.5,
+  larissa:    10.5,
+  francisco:  6.5,
+  joão:       6.5,
+  joao:       6.5,
+  beatriz:    6.5,
+  rafa:       8,
 };
 
 function normFirst(s: string): string {

@@ -4,7 +4,7 @@ import { estimateHours } from "@/lib/estimate";
 export const dynamic = "force-dynamic";
 
 const PERFORMANCE_REPORTERS = ["andre.jesus", "ayslla", "matheus.tavares", "matheus.lopes"];
-const PERFORMANCE_ASSIGNEES  = ["eduardo.oliveira"];
+const PERFORMANCE_ASSIGNEES  = ["eduardo.oliveira", "eduardo.gasparetto"];
 
 // Country field confirmed for BDSL project
 const COUNTRY_FIELD = "customfield_15854";
