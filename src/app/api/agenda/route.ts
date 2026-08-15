@@ -83,9 +83,9 @@ export async function GET(req: Request) {
   try {
     let tasks: AgendaTask[] = [];
 
-    if (member.username) {
+    if (member.accountId) {
       const fields = ["summary", "status", "duedate", "timeoriginalestimate", "parent", "issuetype", "assignee"];
-      const baseFilter = `project = BDSL AND assignee in (${member.username}) AND statusCategory != Done AND status != Backlog`;
+      const baseFilter = `project = BDSL AND assignee = "${member.accountId}" AND statusCategory != Done AND status != Backlog`;
 
       // Two queries: parent tasks + subtasks (mirrors the working Gantt pattern)
       const [parentData, subData] = await Promise.all([
@@ -320,7 +320,7 @@ Seja direto e conciso.`;
       const member = TEAM_MEMBERS.find(m => m.key === memberKey);
       if (!member) return NextResponse.json({ error: "Membro não encontrado" }, { status: 400 });
 
-      if (!member.username) {
+      if (!member.accountId) {
         await jiraFetch(`/rest/api/3/issue/${issueKey}/comment`, {
           method: "POST",
           body: JSON.stringify({
@@ -333,12 +333,9 @@ Seja direto e conciso.`;
         return NextResponse.json({ ok: true, note: "sem_jira_comentado" });
       }
 
-      const accountId = await findAccountId(member.username);
-      if (!accountId) return NextResponse.json({ error: "accountId não encontrado para " + member.username }, { status: 404 });
-
       await jiraFetch(`/rest/api/3/issue/${issueKey}`, {
         method: "PUT",
-        body: JSON.stringify({ fields: { assignee: { accountId } } }),
+        body: JSON.stringify({ fields: { assignee: { accountId: member.accountId } } }),
       });
       return NextResponse.json({ ok: true });
     }

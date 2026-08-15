@@ -24,34 +24,22 @@ const AREA_COLOR: Record<string, string> = {
   motion: "#ea580c",
 };
 
+const PX_PER_HOUR = 72;
+const START_H = 9;
+
 /* ─── Helpers ─── */
 
 function fmtH(h: number): string {
   if (h === 0) return "0h";
   const f = Math.floor(h);
   const m = Math.round((h - f) * 60);
-  return m > 0 ? `${f}h${String(m).padStart(2,"0")}` : `${f}h`;
-}
-
-function statusChip(status: string): { label: string; bg: string; color: string } {
-  const m: Record<string, { label: string; bg: string; color: string }> = {
-    done:        { label: "Entregue",     bg: "#f3f4f6", color: "#6b7280" },
-    in_review:   { label: "Entr. p/ feedb.", bg: "#fff7ed", color: "#c2410c" },
-    in_progress: { label: "Em andamento", bg: "#eff6ff", color: "#1d4ed8" },
-    to_do:       { label: "A fazer",      bg: "#f9fafb", color: "#9ca3af" },
-  };
-  return m[status] ?? m.to_do;
-}
-
-function LS(key: string, fallback: string) {
-  if (typeof window === "undefined") return fallback;
-  return localStorage.getItem(key) ?? fallback;
+  return m > 0 ? `${f}h${String(m).padStart(2, "0")}` : `${f}h`;
 }
 
 /* ─── Chat message type ─── */
 interface ChatMsg { role: "user" | "assistant"; text: string; }
 
-/* ─── Component ─── */
+/* ─── Main Page ─── */
 
 export default function AgendaPage() {
   const [selectedMember, setSelectedMember] = useState("eduardo");
@@ -59,28 +47,22 @@ export default function AgendaPage() {
   const [data, setData] = useState<AgendaResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Real-hours overrides (localStorage)
   const [realHours, setRealHours] = useState<Record<string, string>>({});
 
-  // Recording scheduling
   const [recordingModal, setRecordingModal] = useState<{ key: string; title: string } | null>(null);
   const [recDate, setRecDate] = useState("");
   const [recTime, setRecTime] = useState("manhã");
   const [recCustom, setRecCustom] = useState("");
   const [recSaving, setRecSaving] = useState(false);
 
-  // Distribute modal
   const [distributeModal, setDistributeModal] = useState<AgendaTask | null>(null);
   const [distributing, setDistributing] = useState(false);
 
-  // Chat
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Load real hours from localStorage on mount
   useEffect(() => {
     const saved: Record<string, string> = {};
     for (let i = 0; i < localStorage.length; i++) {
@@ -91,11 +73,6 @@ export default function AgendaPage() {
     }
     setRealHours(saved);
   }, []);
-
-  function saveRealH(key: string, val: string) {
-    setRealHours(prev => ({ ...prev, [key]: val }));
-    localStorage.setItem(`agenda_real_hours_${key}`, val);
-  }
 
   useEffect(() => {
     setLoading(true);
@@ -145,7 +122,6 @@ export default function AgendaPage() {
     });
     setDistributing(false);
     setDistributeModal(null);
-    // Reload
     fetch(`/api/agenda?pessoa=${selectedMember}&week=${weekOffset}`)
       .then(r => r.json()).then(setData);
   }
@@ -164,13 +140,12 @@ export default function AgendaPage() {
     setRecordingModal(null);
   }
 
-  // Compute week range label
   const weekLabel = (() => {
     const now = new Date();
     const mon = new Date(now);
     mon.setDate(now.getDate() - ((now.getDay() + 6) % 7) + weekOffset * 7);
     const fri2 = new Date(mon); fri2.setDate(mon.getDate() + 11);
-    const fmt = (d: Date) => `${d.getDate()}/${d.getMonth()+1}`;
+    const fmt = (d: Date) => `${d.getDate()}/${d.getMonth() + 1}`;
     return `${fmt(mon)} — ${fmt(fri2)}`;
   })();
 
@@ -193,17 +168,14 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      <div style={{ flex: 1, maxWidth: 1300, margin: "0 auto", width: "100%", padding: "16px 12px 120px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ flex: 1, maxWidth: 1400, margin: "0 auto", width: "100%", padding: "16px 12px 120px", display: "flex", flexDirection: "column", gap: 16 }}>
 
-        {/* PARTE 1 — Tasks sem dono */}
+        {/* Tasks sem dono */}
         {data?.unassigned && data.unassigned.length > 0 && (
-          <UnassignedPanel
-            tasks={data.unassigned}
-            onDistribute={task => setDistributeModal(task)}
-          />
+          <UnassignedPanel tasks={data.unassigned} onDistribute={t => setDistributeModal(t)} />
         )}
 
-        {/* PARTE 2 — Barra de pessoas */}
+        {/* Barra de pessoas */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {MEMBERS.map(m => (
             <button
@@ -216,54 +188,47 @@ export default function AgendaPage() {
                 color: selectedMember === m.key ? "white" : "#374151",
                 transition: "all 0.15s",
               }}
-            >
-              {m.display}
-            </button>
+            >{m.display}</button>
           ))}
         </div>
 
-        {/* PARTE 3 — Visão da pessoa */}
+        {/* Calendário */}
         {loading ? (
-          <p style={{ textAlign: "center", color: "#9ca3af", padding: 40 }}>Conectando ao Jira...</p>
+          <div style={{ textAlign: "center", color: "#9ca3af", padding: 60, fontSize: 13 }}>Conectando ao Jira...</div>
         ) : error ? (
-          <p style={{ textAlign: "center", color: "#dc2626", padding: 40 }}>Erro: {error}</p>
+          <div style={{ textAlign: "center", color: "#dc2626", padding: 40, fontSize: 13 }}>Erro: {error}</div>
         ) : data ? (
-          <PersonView
+          <WeekCalendar
             data={data}
             realHours={realHours}
-            onSaveRealH={saveRealH}
-            onScheduleRecording={task => { setRecordingModal(task); setRecDate(""); setRecTime("manhã"); setRecCustom(""); }}
+            onSaveRealH={(k, v) => {
+              setRealHours(prev => ({ ...prev, [k]: v }));
+              localStorage.setItem(`agenda_real_hours_${k}`, v);
+            }}
+            onScheduleRecording={task => {
+              setRecordingModal(task);
+              setRecDate(""); setRecTime("manhã"); setRecCustom("");
+            }}
           />
         ) : null}
       </div>
 
-      {/* PARTE 4 — Chat fixo no rodapé */}
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0,
-        background: "white", borderTop: "1px solid #eef0f3",
-        zIndex: 30,
-      }}>
-        {/* Chat history (colapsável) */}
+      {/* Chat fixo no rodapé */}
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "white", borderTop: "1px solid #eef0f3", zIndex: 30 }}>
         {chatMessages.length > 0 && (
-          <div style={{ maxHeight: 220, overflowY: "auto", padding: "8px 20px", borderBottom: "1px solid #f3f4f6" }}>
+          <div style={{ maxHeight: 200, overflowY: "auto", padding: "8px 20px", borderBottom: "1px solid #f3f4f6" }}>
             {chatMessages.map((m, i) => (
-              <div key={i} style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, color: m.role === "user" ? "#7c3aed" : "#059669",
-                  minWidth: 60, paddingTop: 2,
-                }}>
+              <div key={i} style={{ marginBottom: 6, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: m.role === "user" ? "#7c3aed" : "#059669", minWidth: 56, paddingTop: 2 }}>
                   {m.role === "user" ? "Você" : "Claude"}
                 </span>
                 <span style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{m.text}</span>
               </div>
             ))}
-            {chatLoading && (
-              <div style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic" }}>Claude está pensando...</div>
-            )}
+            {chatLoading && <div style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic" }}>Claude está pensando...</div>}
             <div ref={chatEndRef} />
           </div>
         )}
-        {/* Input */}
         <div style={{ padding: "10px 20px", display: "flex", gap: 8, alignItems: "center" }}>
           <div style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>✦ Claude</div>
           <input
@@ -271,22 +236,13 @@ export default function AgendaPage() {
             onChange={e => setChatInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendChat()}
             placeholder='Ex: "quanto tempo a Larissa tem livre?" ou "distribui as tasks sem dono"'
-            style={{
-              flex: 1, fontSize: 13, border: "1px solid #e5e7eb", borderRadius: 8,
-              padding: "8px 12px", outline: "none", color: "#111",
-            }}
+            style={{ flex: 1, fontSize: 13, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", outline: "none", color: "#111" }}
           />
           <button
             onClick={sendChat}
             disabled={chatLoading || !chatInput.trim()}
-            style={{
-              background: "#059669", color: "white", border: "none", borderRadius: 8,
-              padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-              opacity: chatLoading || !chatInput.trim() ? 0.5 : 1,
-            }}
-          >
-            Enviar
-          </button>
+            style={{ background: "#059669", color: "white", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: chatLoading || !chatInput.trim() ? 0.5 : 1 }}
+          >Enviar</button>
         </div>
       </div>
 
@@ -296,23 +252,16 @@ export default function AgendaPage() {
           task={distributeModal}
           members={MEMBERS}
           loading={distributing}
-          onAssign={(mk) => assignTask(distributeModal.key, mk)}
+          onAssign={mk => assignTask(distributeModal.key, mk)}
           onClose={() => setDistributeModal(null)}
         />
       )}
-
       {recordingModal && (
         <RecordingModal
           title={recordingModal.title}
-          date={recDate}
-          time={recTime}
-          custom={recCustom}
-          saving={recSaving}
-          onDateChange={setRecDate}
-          onTimeChange={setRecTime}
-          onCustomChange={setRecCustom}
-          onSave={saveRecording}
-          onClose={() => setRecordingModal(null)}
+          date={recDate} time={recTime} custom={recCustom} saving={recSaving}
+          onDateChange={setRecDate} onTimeChange={setRecTime} onCustomChange={setRecCustom}
+          onSave={saveRecording} onClose={() => setRecordingModal(null)}
         />
       )}
     </div>
@@ -330,22 +279,14 @@ function UnassignedPanel({ tasks, onDistribute }: { tasks: AgendaTask[]; onDistr
       </div>
       <div>
         {tasks.map((t, i) => (
-          <div key={t.key} style={{
-            display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
-            borderBottom: i < tasks.length - 1 ? "1px solid #f9fafb" : "none",
-            flexWrap: "wrap",
-          }}>
+          <div key={t.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", borderBottom: i < tasks.length - 1 ? "1px solid #f9fafb" : "none", flexWrap: "wrap" }}>
             <a href={`${JIRA}/${t.key}`} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textDecoration: "none", minWidth: 80 }}>
-              {t.key}
-            </a>
+              style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textDecoration: "none", minWidth: 80 }}>{t.key}</a>
             <span style={{ fontSize: 12, color: "#111", flex: 1, minWidth: 120 }}>{t.title}</span>
             <span style={{ fontSize: 11, color: "#6b7280" }}>{fmtH(t.estimatedH)}</span>
             {t.dueDate && <span style={{ fontSize: 10, color: "#9ca3af" }}>📅 {t.dueDate.slice(5).replace("-", "/")}</span>}
-            <button
-              onClick={() => onDistribute(t)}
-              style={{ background: "#059669", color: "white", border: "none", borderRadius: 6, padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
-            >
+            <button onClick={() => onDistribute(t)}
+              style={{ background: "#059669", color: "white", border: "none", borderRadius: 6, padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
               Distribuir
             </button>
           </div>
@@ -355,9 +296,9 @@ function UnassignedPanel({ tasks, onDistribute }: { tasks: AgendaTask[]; onDistr
   );
 }
 
-/* ─── Person View ─── */
+/* ─── Week Calendar ─── */
 
-function PersonView({
+function WeekCalendar({
   data, realHours, onSaveRealH, onScheduleRecording,
 }: {
   data: AgendaResponse;
@@ -368,148 +309,240 @@ function PersonView({
   const { member, tasks, days } = data;
   const areaC = AREA_COLOR[member.area] ?? "#6b7280";
 
+  // Subtasks take priority: hide a parent task if the person also has subtasks of that parent
+  const parentKeysOfSubtasks = new Set(tasks.filter(t => t.parentKey).map(t => t.parentKey!));
+  const displayTaskKeys = new Set(
+    tasks
+      .filter(t => t.parentKey !== null || !parentKeysOfSubtasks.has(t.key))
+      .map(t => t.key)
+  );
+
+  // Build full task map for quick lookup (isRecording, etc.)
+  const taskMap = new Map(tasks.map(t => [t.key, t]));
+
+  // Filter and recalculate each day
+  const filteredDays = days.map(day => {
+    const filtered = day.tasks.filter(t => displayTaskKeys.has(t.key));
+    const usedH = filtered.reduce((s, t) => s + t.hours, 0);
+    return {
+      ...day,
+      tasks: filtered,
+      freeH: Math.max(0, day.totalCap - usedH),
+      overloaded: usedH > day.totalCap,
+    };
+  });
+
+  const END_H = Math.max(19, START_H + Math.ceil(member.dailyH) + 2);
+  const TOTAL_H = END_H - START_H;
+  const gridH = TOTAL_H * PX_PER_HOUR;
+  const hourLabels = Array.from({ length: TOTAL_H }, (_, i) => START_H + i);
+
+  const displayCount = tasks.filter(t => displayTaskKeys.has(t.key)).length;
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-
-      {/* LEFT — Lista de tasks */}
-      <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", overflow: "hidden" }}>
-        {/* Member header */}
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: "50%", background: areaC, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>
-            {member.display[0]}
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#111" }}>{member.display}</div>
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>{member.role} · {fmtH(member.dailyH)}/dia</div>
-          </div>
-          <div style={{ marginLeft: "auto", fontSize: 11, color: "#6b7280" }}>
-            {tasks.length} tasks
-          </div>
+    <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", overflow: "hidden" }}>
+      {/* Member header */}
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: "50%", background: areaC, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, flexShrink: 0 }}>
+          {member.display[0]}
         </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#111" }}>{member.display}</div>
+          <div style={{ fontSize: 11, color: "#9ca3af" }}>{member.role} · {fmtH(member.dailyH)}/dia</div>
+        </div>
+        <div style={{ marginLeft: "auto", fontSize: 11, color: displayCount === 0 ? "#9ca3af" : "#374151", fontWeight: 600 }}>
+          {displayCount} {displayCount === 1 ? "task" : "tasks"}
+        </div>
+      </div>
 
-        {/* Task list */}
-        {tasks.length === 0 ? (
-          <p style={{ textAlign: "center", color: "#9ca3af", padding: 24, fontSize: 12 }}>Sem tasks ativas.</p>
-        ) : (
-          <div style={{ maxHeight: 520, overflowY: "auto" }}>
-            {tasks.map(task => {
-              const chip = statusChip(task.status);
-              const realH = realHours[task.key] ?? "";
-              const recStored = (() => {
-                try { const r = localStorage.getItem(`agenda_recording_${task.key}`); return r ? JSON.parse(r) : null; } catch { return null; }
-              })();
-              return (
-                <div key={task.key} style={{ padding: "10px 16px", borderBottom: "1px solid #f9fafb" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
-                    <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textDecoration: "none", flexShrink: 0, paddingTop: 1 }}>
-                      {task.key}
-                    </a>
-                    <span style={{ fontSize: 12, color: "#111", flex: 1, lineHeight: 1.4 }}>{task.title}</span>
-                    <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20, background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>
-                      {chip.label}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
-                    {task.dueDate && <span style={{ color: "#9ca3af" }}>📅 {task.dueDate.slice(5).replace("-", "/")}</span>}
-                    <span style={{ color: "#6b7280" }}>Estimado: {fmtH(task.estimatedH)}</span>
-                    <span style={{ color: "#d1d5db" }}>|</span>
-                    <span style={{ color: "#9ca3af" }}>Real:</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={realH}
-                      placeholder="—"
-                      onChange={e => onSaveRealH(task.key, e.target.value)}
-                      style={{ width: 48, fontSize: 11, border: "1px solid #e5e7eb", borderRadius: 4, padding: "1px 4px", color: "#111" }}
-                    />
-                    <span style={{ color: "#9ca3af" }}>h</span>
-                  </div>
-                  {task.isRecording && (
-                    <div style={{ marginTop: 6 }}>
-                      {recStored ? (
-                        <span style={{ fontSize: 11, color: "#059669", background: "#d1fae5", padding: "2px 8px", borderRadius: 20 }}>
-                          📹 Gravação: {recStored.date?.slice(5).replace("-","/")} [{recStored.time}]
-                        </span>
-                      ) : (
+      {/* Day headers row */}
+      <div style={{ display: "grid", gridTemplateColumns: `52px repeat(${filteredDays.length}, 1fr)`, borderBottom: "1px solid #f0f0f0" }}>
+        <div style={{ borderRight: "1px solid #f0f0f0" }} />
+        {filteredDays.map(day => {
+          const usedH = day.totalCap - day.freeH;
+          const pct = Math.min(100, (usedH / day.totalCap) * 100);
+          const isToday = day.date === todayStr();
+          return (
+            <div key={day.date} style={{ borderRight: "1px solid #f0f0f0", padding: "8px 4px 6px", textAlign: "center" }}>
+              <div style={{ fontSize: 11, fontWeight: isToday ? 800 : 600, color: isToday ? "#059669" : "#111", letterSpacing: "-0.2px" }}>
+                {day.label}
+                {isToday && <span style={{ marginLeft: 4, fontSize: 9, background: "#d1fae5", color: "#059669", borderRadius: 10, padding: "1px 5px" }}>hoje</span>}
+              </div>
+              <div style={{ margin: "5px 6px 0", height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: day.overloaded ? "#ef4444" : "#059669", borderRadius: 2 }} />
+              </div>
+              <div style={{ fontSize: 9, color: day.overloaded ? "#dc2626" : "#9ca3af", marginTop: 3 }}>
+                {day.overloaded ? `⚠ +${fmtH(Math.abs(day.freeH))}` : `${fmtH(day.freeH)} livre`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Time grid */}
+      <div style={{ overflowY: "auto", maxHeight: 620 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `52px repeat(${filteredDays.length}, 1fr)`, position: "relative", minHeight: gridH }}>
+
+          {/* Hour labels column */}
+          <div style={{ borderRight: "1px solid #f0f0f0", position: "relative", minHeight: gridH }}>
+            {hourLabels.map(h => (
+              <div key={h} style={{ position: "absolute", top: (h - START_H) * PX_PER_HOUR - 7, right: 6, fontSize: 9, color: "#c0c4cc", fontVariantNumeric: "tabular-nums" }}>
+                {String(h).padStart(2, "0")}:00
+              </div>
+            ))}
+          </div>
+
+          {/* Day columns */}
+          {filteredDays.map(day => {
+            // Stack tasks from 9:00, accumulating hours
+            let accH = 0;
+            const positioned = day.tasks.map(t => {
+              const startH = accH;
+              accH += t.hours;
+              return { ...t, startH };
+            });
+
+            return (
+              <div key={day.date} style={{ position: "relative", borderRight: "1px solid #f0f0f0", minHeight: gridH }}>
+                {/* Hour grid lines */}
+                {hourLabels.map(h => (
+                  <div key={h} style={{
+                    position: "absolute", top: (h - START_H) * PX_PER_HOUR, left: 0, right: 0,
+                    borderTop: "1px solid #f5f5f5",
+                  }} />
+                ))}
+
+                {/* Daily capacity boundary line */}
+                <div style={{
+                  position: "absolute",
+                  top: member.dailyH * PX_PER_HOUR,
+                  left: 0, right: 0,
+                  borderTop: "2px dashed #bbf7d0",
+                  zIndex: 2,
+                }} />
+
+                {/* Task blocks */}
+                {positioned.map(t => {
+                  const fullTask = taskMap.get(t.key);
+                  const isRec = fullTask?.isRecording ?? false;
+                  const recStored = (() => {
+                    if (typeof window === "undefined") return null;
+                    try { const r = localStorage.getItem(`agenda_recording_${t.key}`); return r ? JSON.parse(r) : null; } catch { return null; }
+                  })();
+                  const top = t.startH * PX_PER_HOUR;
+                  const height = Math.max(t.hours * PX_PER_HOUR, 32);
+                  const bg = t.color;
+
+                  return (
+                    <div
+                      key={t.key}
+                      style={{
+                        position: "absolute",
+                        top: top + 2,
+                        height: height - 4,
+                        left: 3, right: 3,
+                        background: bg + "18",
+                        borderLeft: `3px solid ${bg}`,
+                        borderRadius: "0 6px 6px 0",
+                        padding: "4px 6px",
+                        overflow: "hidden",
+                        zIndex: 3,
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "space-between",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <a
+                        href={`${JIRA}/${t.key}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ textDecoration: "none", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}
+                      >
+                        <div style={{
+                          fontSize: 11, fontWeight: 600, color: "#1a1a2e", lineHeight: 1.3,
+                          overflow: "hidden", textOverflow: "ellipsis",
+                          whiteSpace: height < 48 ? "nowrap" : "normal",
+                          maxHeight: height < 48 ? undefined : "2.6em",
+                        }}>
+                          {t.title}
+                        </div>
+                        {height >= 40 && (
+                          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+                            {fmtH(t.hours)}
+                            {fullTask?.dueDate && <span style={{ marginLeft: 6, color: "#9ca3af" }}>📅 {fullTask.dueDate.slice(5).replace("-", "/")}</span>}
+                          </div>
+                        )}
+                      </a>
+
+                      {/* Recording badge */}
+                      {isRec && height >= 44 && (
                         <button
-                          onClick={() => onScheduleRecording({ key: task.key, title: task.title })}
-                          style={{ fontSize: 11, color: "#ea580c", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "2px 10px", cursor: "pointer" }}
+                          onClick={e => { e.preventDefault(); e.stopPropagation(); onScheduleRecording({ key: t.key, title: t.title }); }}
+                          style={{
+                            marginTop: 3, alignSelf: "flex-start",
+                            fontSize: 9, color: recStored ? "#059669" : "#ea580c",
+                            background: recStored ? "#d1fae5" : "#fff7ed",
+                            border: "none", borderRadius: 10, padding: "1px 6px", cursor: "pointer",
+                          }}
                         >
-                          📹 Agendar gravação
+                          📹 {recStored ? `${recStored.date?.slice(5).replace("-", "/")} [${recStored.time}]` : "agendar"}
                         </button>
                       )}
                     </div>
-                  )}
+                  );
+                })}
+
+                {/* Empty day placeholder */}
+                {day.tasks.length === 0 && (
+                  <div style={{
+                    position: "absolute", top: 12, left: 0, right: 0,
+                    textAlign: "center", fontSize: 10, color: "#e5e7eb",
+                    pointerEvents: "none",
+                  }}>livre</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Task list footer — real hours tracking */}
+      {displayCount > 0 && (
+        <details style={{ borderTop: "1px solid #f0f0f0" }}>
+          <summary style={{ padding: "8px 16px", fontSize: 11, color: "#9ca3af", cursor: "pointer", userSelect: "none", listStyle: "none" }}>
+            ▸ Ver lista de tasks ({displayCount}) · registrar horas reais
+          </summary>
+          <div style={{ borderTop: "1px solid #f9fafb" }}>
+            {tasks.filter(t => displayTaskKeys.has(t.key)).map(task => {
+              const realH = realHours[task.key] ?? "";
+              return (
+                <div key={task.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: "1px solid #f9fafb", flexWrap: "wrap" }}>
+                  <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textDecoration: "none", minWidth: 80 }}>{task.key}</a>
+                  <span style={{ fontSize: 12, color: "#111", flex: 1, minWidth: 160 }}>{task.title}</span>
+                  {task.dueDate && <span style={{ fontSize: 10, color: "#9ca3af" }}>📅 {task.dueDate.slice(5).replace("-", "/")}</span>}
+                  <span style={{ fontSize: 11, color: "#6b7280" }}>Est. {fmtH(task.estimatedH)}</span>
+                  <span style={{ fontSize: 11, color: "#9ca3af" }}>Real:</span>
+                  <input
+                    type="number" min="0" step="0.5" value={realH} placeholder="—"
+                    onChange={e => onSaveRealH(task.key, e.target.value)}
+                    style={{ width: 48, fontSize: 11, border: "1px solid #e5e7eb", borderRadius: 4, padding: "2px 4px", color: "#111" }}
+                  />
+                  <span style={{ fontSize: 11, color: "#9ca3af" }}>h</span>
                 </div>
               );
             })}
           </div>
-        )}
-      </div>
-
-      {/* RIGHT — Agenda visual por dia */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {days.map(day => <DayCard key={day.date} day={day} />)}
-      </div>
+        </details>
+      )}
     </div>
   );
 }
 
-/* ─── Day Card ─── */
-
-function DayCard({ day }: { day: DaySlot }) {
-  const totalBooked = day.totalCap - day.freeH;
-  const usedPct = Math.min(100, (totalBooked / day.totalCap) * 100);
-
-  return (
-    <div style={{
-      background: day.overloaded ? "#fff5f5" : "white",
-      borderRadius: 10,
-      border: day.overloaded ? "1px solid #fca5a5" : "1px solid #eef0f3",
-      padding: "10px 14px",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#111" }}>{day.label}</span>
-        <span style={{ fontSize: 11, color: day.overloaded ? "#dc2626" : "#059669", fontWeight: 600 }}>
-          {day.overloaded ? `⚠️ +${fmtH(Math.abs(day.freeH))} acima` : `🟢 ${fmtH(day.freeH)} livre`}
-        </span>
-      </div>
-
-      {/* Capacity bar */}
-      <div style={{ height: 4, background: "#f3f4f6", borderRadius: 2, marginBottom: 8, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${usedPct}%`, background: day.overloaded ? "#ef4444" : "#059669", borderRadius: 2, transition: "width 0.3s" }} />
-      </div>
-
-      {/* Task blocks */}
-      {day.tasks.length === 0 ? (
-        <div style={{ fontSize: 11, color: "#d1d5db", fontStyle: "italic" }}>Nenhuma task</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {day.tasks.map(t => (
-            <div key={t.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 2, background: t.color, flexShrink: 0 }} />
-              <a href={`${JIRA}/${t.key}`} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#374151", textDecoration: "none", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                title={t.title}>
-                {t.title.length > 38 ? t.title.slice(0,38) + "…" : t.title}
-              </a>
-              <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{fmtH(t.hours)}</span>
-            </div>
-          ))}
-          {/* Free time block */}
-          {day.freeH > 0 && !day.overloaded && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e5e7eb", flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: "#d1d5db", fontStyle: "italic", flex: 1 }}>livre</span>
-              <span style={{ fontSize: 10, color: "#d1d5db", flexShrink: 0 }}>{fmtH(day.freeH)}</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /* ─── Distribute Modal ─── */
@@ -557,7 +590,7 @@ function RecordingModal({ title, date, time, custom, saving, onDateChange, onTim
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
       <div style={{ background: "white", borderRadius: 14, padding: "24px 28px", maxWidth: 420, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>📹 Agendar gravação</div>
-        <div style={{ fontSize: 12, color: "#374151", marginBottom: 16, lineHeight: 1.4 }}>{title.slice(0,70)}{title.length > 70 ? "…" : ""}</div>
+        <div style={{ fontSize: 12, color: "#374151", marginBottom: 16, lineHeight: 1.4 }}>{title.slice(0, 70)}{title.length > 70 ? "…" : ""}</div>
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 11, color: "#6b7280", display: "block", marginBottom: 4 }}>Data</label>
           <input type="date" value={date} onChange={e => onDateChange(e.target.value)}
@@ -580,8 +613,8 @@ function RecordingModal({ title, date, time, custom, saving, onDateChange, onTim
           )}
         </div>
         <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 16, background: "#f9fafb", borderRadius: 8, padding: "8px 12px" }}>
-          Vai postar no Jira:<br/>
-          <em>@francisco @larissa.delarue gravação agendada para {date ? date.slice(5).replace("-","/") : "DD/MM"} [{time === "custom" ? custom || "HH:MM" : time}]</em>
+          Vai postar no Jira:<br />
+          <em>@francisco @larissa.delarue gravação agendada para {date ? date.slice(5).replace("-", "/") : "DD/MM"} [{time === "custom" ? custom || "HH:MM" : time}]</em>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "1px solid #e5e7eb", background: "white", fontSize: 12, cursor: "pointer", color: "#6b7280" }}>
@@ -597,7 +630,7 @@ function RecordingModal({ title, date, time, custom, saving, onDateChange, onTim
   );
 }
 
-/* ─── Shared button style ─── */
+/* ─── Shared styles ─── */
 const btnStyle: React.CSSProperties = {
   background: "white", border: "1px solid #e5e7eb", borderRadius: 6,
   padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "#374151",

@@ -3,7 +3,7 @@
 export interface TeamMember {
   key: string;
   display: string;
-  username: string | null;
+  accountId: string | null;
   email: string;
   dailyH: number;
   role: string;
@@ -11,14 +11,14 @@ export interface TeamMember {
 }
 
 export const TEAM_MEMBERS: TeamMember[] = [
-  { key: "eduardo",    display: "Eduardo",    username: "eduardo.oliveira",    email: "eduardo.oliveira@nuvemshop.com.br",    dailyH: 6.5,  role: "Design + Motion",    area: "design" },
-  { key: "gasparetto", display: "Gasparetto", username: "eduardo.gasparetto",  email: "eduardo.gasparetto@nuvemshop.com.br",  dailyH: 6.5,  role: "Design (EnP)",       area: "design" },
-  { key: "gabriel",    display: "Gabriel",    username: null,                   email: "gabriel.cassino@nuvemshop.com.br",     dailyH: 6.5,  role: "Design",             area: "design" },
-  { key: "larissa",    display: "Larissa",    username: "larissa.delarue",     email: "larissa.delarue@nuvemshop.com.br",     dailyH: 10.5, role: "Motion + Gravação",  area: "motion" },
-  { key: "francisco",  display: "Francisco",  username: "francisco.fernandes",  email: "francisco.fernandes@nuvemshop.com.br", dailyH: 6.5,  role: "Audiovisual",        area: "motion" },
-  { key: "joao",       display: "João",       username: "joao.camargo",         email: "joao.camargo@nuvemshop.com.br",        dailyH: 6.5,  role: "Sinalização",        area: "design" },
-  { key: "beatriz",    display: "Beatriz",    username: "beatriz",              email: "beatriz@nuvemshop.com.br",             dailyH: 6.5,  role: "Copy",               area: "copy"   },
-  { key: "rafa",       display: "Rafa",       username: "rafaela.ceragioli",    email: "rafaela.ceragioli@nuvemshop.com.br",   dailyH: 8,    role: "Overflow (Monstra)", area: "design" },
+  { key: "eduardo",    display: "Eduardo",    accountId: "712020:4648823a-0cdc-4178-b186-597098121542", email: "eduardo.cunha@nuvemshop.com.br",        dailyH: 6.5,  role: "Design + Motion",    area: "design" },
+  { key: "gasparetto", display: "Gasparetto", accountId: "61aa13d5c75da800721a2623",                    email: "eduardo.gasparetto@nuvemshop.com.br",   dailyH: 6.5,  role: "Design (EnP)",       area: "design" },
+  { key: "gabriel",    display: "Gabriel",    accountId: null,                                           email: "gabriel.cassino@nuvemshop.com.br",      dailyH: 6.5,  role: "Design",             area: "design" },
+  { key: "larissa",    display: "Larissa",    accountId: "61b39fc4d2e64c0071f160d5",                    email: "larissa.delarue@nuvemshop.com.br",      dailyH: 10.5, role: "Motion + Gravação",  area: "motion" },
+  { key: "francisco",  display: "Francisco",  accountId: "712020:e22b3767-90e9-47d2-92cd-ef84adafaac6", email: "francisco.fernandes@nuvemshop.com.br",  dailyH: 6.5,  role: "Audiovisual",        area: "motion" },
+  { key: "joao",       display: "João",       accountId: "712020:2ee0f456-77e7-4f2a-8502-ff712b3ba6da", email: "joao.camargo@nuvemshop.com.br",         dailyH: 6.5,  role: "Sinalização",        area: "design" },
+  { key: "beatriz",    display: "Beatriz",    accountId: "6425a53f67102fc717c2902d",                    email: "beatriz.pusso@nuvemshop.com.br",        dailyH: 6.5,  role: "Copy",               area: "copy"   },
+  { key: "rafa",       display: "Rafa",       accountId: "712020:e2200010-bf69-4f6e-87a4-a792c42d8837", email: "rafaela.ceragioli@nuvemshop.com.br",    dailyH: 8,    role: "Overflow (Monstra)", area: "design" },
 ];
 
 export interface AgendaTask {
