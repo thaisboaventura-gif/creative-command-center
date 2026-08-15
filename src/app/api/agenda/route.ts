@@ -123,7 +123,7 @@ export async function GET(req: Request) {
     }
 
     // Unassigned tasks panel
-    const unassignedJql = `project = BDSL AND assignee is EMPTY AND status != Done AND issuetype != Subtask AND cf[15854] = "Brasil" ORDER BY created DESC`;
+    const unassignedJql = `project = BDSL AND assignee is EMPTY AND statusCategory != Done AND status != Backlog AND issuetype != Subtask AND cf[15854] = "Brasil" ORDER BY created DESC`;
     const uData = await jiraFetch(
       `/rest/api/3/search/jql?jql=${encodeURIComponent(unassignedJql)}&maxResults=20&fields=summary,status,duedate,timeoriginalestimate`
     );
