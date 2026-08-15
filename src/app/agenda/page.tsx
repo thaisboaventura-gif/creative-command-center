@@ -24,7 +24,7 @@ const AREA_COLOR: Record<string, string> = {
   motion: "#ea580c",
 };
 
-const PX_PER_HOUR = 72;
+const PX_PER_HOUR = 36;
 const START_H = 9;
 
 /* ─── Helpers ─── */
@@ -48,6 +48,8 @@ export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [realHours, setRealHours] = useState<Record<string, string>>({});
+  const [customHours, setCustomHours] = useState<Record<string, number>>({});
+  const [editHoursTask, setEditHoursTask] = useState<{ key: string; title: string; currentH: number } | null>(null);
 
   const [recordingModal, setRecordingModal] = useState<{ key: string; title: string } | null>(null);
   const [recDate, setRecDate] = useState("");
@@ -65,13 +67,19 @@ export default function AgendaPage() {
 
   useEffect(() => {
     const saved: Record<string, string> = {};
+    const savedH: Record<string, number> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
       if (k.startsWith("agenda_real_hours_")) {
         saved[k.replace("agenda_real_hours_", "")] = localStorage.getItem(k)!;
       }
+      if (k.startsWith("agenda_custom_h_")) {
+        const v = parseFloat(localStorage.getItem(k)!);
+        if (!isNaN(v)) savedH[k.replace("agenda_custom_h_", "")] = v;
+      }
     }
     setRealHours(saved);
+    setCustomHours(savedH);
   }, []);
 
   useEffect(() => {
@@ -192,15 +200,17 @@ export default function AgendaPage() {
           ))}
         </div>
 
-        {/* Calendário */}
+        {/* Gantt + Calendário */}
         {loading ? (
           <div style={{ textAlign: "center", color: "#9ca3af", padding: 60, fontSize: 13 }}>Conectando ao Jira...</div>
         ) : error ? (
           <div style={{ textAlign: "center", color: "#dc2626", padding: 40, fontSize: 13 }}>Erro: {error}</div>
-        ) : data ? (
+        ) : data ? (<>
+          <PersonGantt data={data} customHours={customHours} />
           <WeekCalendar
             data={data}
             realHours={realHours}
+            customHours={customHours}
             onSaveRealH={(k, v) => {
               setRealHours(prev => ({ ...prev, [k]: v }));
               localStorage.setItem(`agenda_real_hours_${k}`, v);
@@ -209,8 +219,9 @@ export default function AgendaPage() {
               setRecordingModal(task);
               setRecDate(""); setRecTime("manhã"); setRecCustom("");
             }}
+            onEditHours={(task) => setEditHoursTask(task)}
           />
-        ) : null}
+        </>) : null}
       </div>
 
       {/* Chat fixo no rodapé */}
@@ -256,6 +267,17 @@ export default function AgendaPage() {
           onClose={() => setDistributeModal(null)}
         />
       )}
+      {editHoursTask && (
+        <EditHoursModal
+          task={editHoursTask}
+          onSave={(h) => {
+            setCustomHours(prev => ({ ...prev, [editHoursTask.key]: h }));
+            localStorage.setItem(`agenda_custom_h_${editHoursTask.key}`, String(h));
+            setEditHoursTask(null);
+          }}
+          onClose={() => setEditHoursTask(null)}
+        />
+      )}
       {recordingModal && (
         <RecordingModal
           title={recordingModal.title}
@@ -296,20 +318,154 @@ function UnassignedPanel({ tasks, onDistribute }: { tasks: AgendaTask[]; onDistr
   );
 }
 
+/* ─── Person Gantt ─── */
+
+function PersonGantt({ data, customHours }: { data: AgendaResponse; customHours: Record<string, number> }) {
+  const { tasks, days } = data;
+
+  const parentKeysOfSubtasks = new Set(tasks.filter(t => t.parentKey).map(t => t.parentKey!));
+  const displayTasks = tasks.filter(t => t.parentKey !== null || !parentKeysOfSubtasks.has(t.key));
+
+  const colorMap = new Map<string, string>();
+  for (const day of days) {
+    for (const t of day.tasks) {
+      if (!colorMap.has(t.key)) colorMap.set(t.key, t.color);
+    }
+  }
+
+  const today = todayStr();
+  const dayStrs = days.map(d => d.date);
+
+  if (displayTasks.length === 0) {
+    return (
+      <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", padding: "14px 16px", textAlign: "center", color: "#d1d5db", fontSize: 12 }}>
+        Nenhuma task ativa para mostrar no Gantt.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", overflow: "hidden" }}>
+      <div style={{ padding: "10px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>Demanda & Prazos</span>
+        <span style={{ fontSize: 11, color: "#9ca3af" }}>{displayTasks.length} tasks</span>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ minWidth: 500 }}>
+          {/* Day header */}
+          <div style={{ display: "grid", gridTemplateColumns: `160px repeat(${dayStrs.length}, 1fr)`, borderBottom: "1px solid #f3f4f6" }}>
+            <div />
+            {days.map(day => (
+              <div key={day.date} style={{ padding: "5px 2px", textAlign: "center", fontSize: 9, color: day.date === today ? "#059669" : "#b0b7c3", fontWeight: day.date === today ? 800 : 400, lineHeight: 1.2 }}>
+                {day.label.split(" ")[0]}<br />{day.label.split(" ")[1]}
+              </div>
+            ))}
+          </div>
+
+          {/* Task rows */}
+          {displayTasks.map(task => {
+            const color = colorMap.get(task.key) ?? "#80B0E8";
+            const effectiveH = customHours[task.key] ?? task.estimatedH;
+            const isOverdue = task.dueDate ? task.dueDate < today : false;
+            const dueColIdx = task.dueDate
+              ? (() => { const i = dayStrs.findIndex(d => d >= task.dueDate!); return i === -1 ? dayStrs.length - 1 : i; })()
+              : dayStrs.length - 1;
+
+            return (
+              <div key={task.key} style={{ display: "grid", gridTemplateColumns: `160px repeat(${dayStrs.length}, 1fr)`, borderBottom: "1px solid #fafafa" }}>
+                <div style={{ padding: "4px 12px", display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
+                  <div style={{ width: 7, height: 7, borderRadius: 2, background: color, flexShrink: 0 }} />
+                  <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 10, color: "#374151", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}
+                    title={task.title}>{task.title}</a>
+                </div>
+                {dayStrs.map((dayStr, i) => {
+                  const filled = i <= dueColIdx;
+                  const isDueDay = i === dueColIdx && !!task.dueDate;
+                  return (
+                    <div key={dayStr} style={{
+                      height: 26,
+                      background: filled ? (isOverdue ? "#fee2e2" : color + "28") : "transparent",
+                      borderRight: "1px solid #f5f5f5",
+                      position: "relative",
+                    }}>
+                      {isDueDay && (
+                        <div style={{ position: "absolute", right: 1, top: 3, bottom: 3, width: 3, background: isOverdue ? "#ef4444" : color, borderRadius: 2 }} />
+                      )}
+                      {dayStr === today && (
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 1, background: "#10b981", opacity: 0.6 }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Edit Hours Modal ─── */
+
+function EditHoursModal({ task, onSave, onClose }: {
+  task: { key: string; title: string; currentH: number };
+  onSave: (h: number) => void;
+  onClose: () => void;
+}) {
+  const [val, setVal] = useState(String(task.currentH));
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+      <div style={{ background: "white", borderRadius: 14, padding: "22px 26px", maxWidth: 320, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: "#111" }}>Editar tempo estimado</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#ede9fe", display: "inline-block", padding: "1px 7px", borderRadius: 6, marginBottom: 8 }}>{task.key}</div>
+        <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 14, lineHeight: 1.4 }}>{task.title.slice(0, 70)}{task.title.length > 70 ? "…" : ""}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <input
+            autoFocus
+            type="number"
+            min="0.5"
+            step="0.5"
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { const h = parseFloat(val); if (!isNaN(h) && h > 0) { onSave(h); } } if (e.key === "Escape") onClose(); }}
+            style={{ flex: 1, fontSize: 20, fontWeight: 700, border: "2px solid #059669", borderRadius: 8, padding: "8px 12px", color: "#111", outline: "none", textAlign: "center" }}
+          />
+          <span style={{ fontSize: 14, color: "#6b7280", fontWeight: 600 }}>horas</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "1px solid #e5e7eb", background: "white", fontSize: 12, cursor: "pointer", color: "#6b7280" }}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => { const h = parseFloat(val); if (!isNaN(h) && h > 0) onSave(h); }}
+            style={{ flex: 2, padding: "8px", borderRadius: 8, border: "none", background: "#059669", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+          >
+            Salvar →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Week Calendar ─── */
 
 function WeekCalendar({
-  data, realHours, onSaveRealH, onScheduleRecording,
+  data, realHours, customHours, onSaveRealH, onScheduleRecording, onEditHours,
 }: {
   data: AgendaResponse;
   realHours: Record<string, string>;
+  customHours: Record<string, number>;
   onSaveRealH: (key: string, val: string) => void;
   onScheduleRecording: (t: { key: string; title: string }) => void;
+  onEditHours: (t: { key: string; title: string; currentH: number }) => void;
 }) {
   const { member, tasks, days } = data;
   const areaC = AREA_COLOR[member.area] ?? "#6b7280";
 
-  // Subtasks take priority: hide a parent task if the person also has subtasks of that parent
   const parentKeysOfSubtasks = new Set(tasks.filter(t => t.parentKey).map(t => t.parentKey!));
   const displayTaskKeys = new Set(
     tasks
@@ -317,12 +473,13 @@ function WeekCalendar({
       .map(t => t.key)
   );
 
-  // Build full task map for quick lookup (isRecording, etc.)
   const taskMap = new Map(tasks.map(t => [t.key, t]));
 
-  // Filter and recalculate each day
+  // Apply custom hours overrides and filter
   const filteredDays = days.map(day => {
-    const filtered = day.tasks.filter(t => displayTaskKeys.has(t.key));
+    const filtered = day.tasks
+      .filter(t => displayTaskKeys.has(t.key))
+      .map(t => ({ ...t, hours: customHours[t.key] ?? t.hours }));
     const usedH = filtered.reduce((s, t) => s + t.hours, 0);
     return {
       ...day,
@@ -438,39 +595,44 @@ function WeekCalendar({
                       key={t.key}
                       style={{
                         position: "absolute",
-                        top: top + 2,
-                        height: height - 4,
-                        left: 3, right: 3,
+                        top: top + 1,
+                        height: height - 2,
+                        left: 2, right: 2,
                         background: bg + "18",
                         borderLeft: `3px solid ${bg}`,
-                        borderRadius: "0 6px 6px 0",
-                        padding: "4px 6px",
+                        borderRadius: "0 5px 5px 0",
+                        padding: "3px 5px",
                         overflow: "hidden",
                         zIndex: 3,
                         display: "flex",
                         flexDirection: "column",
                         justifyContent: "space-between",
-                        cursor: "pointer",
                       }}
                     >
                       <a
                         href={`${JIRA}/${t.key}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ textDecoration: "none", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}
+                        style={{ textDecoration: "none", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: 0 }}
                       >
                         <div style={{
-                          fontSize: 11, fontWeight: 600, color: "#1a1a2e", lineHeight: 1.3,
+                          fontSize: 10, fontWeight: 600, color: "#1a1a2e", lineHeight: 1.3,
                           overflow: "hidden", textOverflow: "ellipsis",
-                          whiteSpace: height < 48 ? "nowrap" : "normal",
-                          maxHeight: height < 48 ? undefined : "2.6em",
+                          whiteSpace: "nowrap",
                         }}>
                           {t.title}
                         </div>
-                        {height >= 40 && (
-                          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
-                            {fmtH(t.hours)}
-                            {fullTask?.dueDate && <span style={{ marginLeft: 6, color: "#9ca3af" }}>📅 {fullTask.dueDate.slice(5).replace("-", "/")}</span>}
+                        {height >= 30 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}>
+                            <button
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); onEditHours({ key: t.key, title: t.title, currentH: t.hours }); }}
+                              title="Editar horas"
+                              style={{ fontSize: 9, color: "#059669", background: "transparent", border: "none", padding: 0, cursor: "pointer", fontWeight: 700, textDecoration: "underline dotted" }}
+                            >
+                              {fmtH(t.hours)} ✎
+                            </button>
+                            {fullTask?.dueDate && <span style={{ fontSize: 9, color: "#9ca3af" }}>📅{fullTask.dueDate.slice(5).replace("-", "/")}</span>}
+                            {customHours[t.key] && <span style={{ fontSize: 8, color: "#059669" }}>(edit.)</span>}
                           </div>
                         )}
                       </a>
