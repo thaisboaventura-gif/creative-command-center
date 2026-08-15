@@ -84,21 +84,58 @@ export async function GET(req: Request) {
     let tasks: AgendaTask[] = [];
 
     if (member.username) {
-      const jql = `project = BDSL AND assignee = "${member.username}" AND statusCategory != Done AND status != Backlog ORDER BY duedate ASC`;
       const fields = ["summary", "status", "duedate", "timeoriginalestimate", "parent", "issuetype", "assignee"];
-      const data = await jiraFetch(
-        `/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=50&fields=${fields.join(",")}`
-      );
+      const baseFilter = `project = BDSL AND assignee in (${member.username}) AND statusCategory != Done AND status != Backlog`;
 
-      tasks = (data.issues ?? []).map((issue: Record<string, unknown>) => {
+      // Two queries: parent tasks + subtasks (mirrors the working Gantt pattern)
+      const [parentData, subData] = await Promise.all([
+        jiraFetch(`/rest/api/3/search/jql?jql=${encodeURIComponent(
+          `${baseFilter} AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC`
+        )}&maxResults=50&fields=${fields.join(",")}`).catch(() => ({ issues: [] })),
+        jiraFetch(`/rest/api/3/search/jql?jql=${encodeURIComponent(
+          `${baseFilter} AND issuetype in subTaskIssueTypes() ORDER BY updated DESC`
+        )}&maxResults=100&fields=${fields.join(",")}`).catch(() => ({ issues: [] })),
+      ]);
+
+      // For subtasks without duedate, try to inherit from their parent
+      const subIssues: Record<string, unknown>[] = subData.issues ?? [];
+      const parentKeysNeedingDate = new Set<string>();
+      for (const issue of subIssues) {
+        const f = issue.fields as Record<string, unknown>;
+        if (!(f.duedate as string | null)) {
+          const pk = (f.parent as { key?: string } | null)?.key;
+          if (pk) parentKeysNeedingDate.add(pk);
+        }
+      }
+      // Fetch parent duedates in one batch
+      const parentDueDateMap = new Map<string, string | null>();
+      if (parentKeysNeedingDate.size > 0) {
+        const pKeys = [...parentKeysNeedingDate].join(",");
+        try {
+          const pd = await jiraFetch(
+            `/rest/api/3/search/jql?jql=${encodeURIComponent(
+              `issueKey in (${pKeys})`
+            )}&maxResults=50&fields=duedate`
+          );
+          for (const pi of (pd.issues ?? []) as Record<string, unknown>[]) {
+            const pf = pi.fields as Record<string, unknown>;
+            parentDueDateMap.set(pi.key as string, (pf.duedate as string | null) ?? null);
+          }
+        } catch { /* ignore */ }
+      }
+
+      const allIssues = [...(parentData.issues ?? []), ...subIssues] as Record<string, unknown>[];
+
+      tasks = allIssues.map((issue: Record<string, unknown>) => {
         const f = issue.fields as Record<string, unknown>;
         const summary = (f.summary as string) ?? "";
         const status  = ((f.status as { name: string })?.name ?? "").toLowerCase();
-        const due     = (f.duedate as string | null) ?? null;
+        const parent  = (f.parent as { key?: string } | null)?.key ?? null;
+        const rawDue  = (f.duedate as string | null) ?? null;
+        const due     = rawDue ?? (parent ? parentDueDateMap.get(parent) ?? null : null);
         const estSecs = (f.timeoriginalestimate as number | null) ?? null;
         const estH    = estSecs ? estSecs / 3600 : estimateFromSLA(summary);
         const isRec   = /grava[cç]/i.test(summary);
-        const parent  = (f.parent as { key?: string } | null)?.key ?? null;
         const assigneeField = f.assignee as { displayName?: string } | null;
         const assignee = assigneeField?.displayName ?? null;
 
@@ -170,6 +207,8 @@ export async function GET(req: Request) {
       });
     }
 
+    const firstDayKey = days.length > 0 ? fmtDate(days[0]) : null;
+
     const sorted = [...tasks].filter(t => t.dueDate).sort((a,b) =>
       (a.dueDate ?? "").localeCompare(b.dueDate ?? "")
     );
@@ -177,18 +216,20 @@ export async function GET(req: Request) {
       if (!task.dueDate) continue;
       const due = fmtDate(parseLocalDate(task.dueDate));
       const dayKeys = [...dayMap.keys()].filter(k => k <= due);
-      if (dayKeys.length === 0) continue;
-      const targetDay = dayKeys[dayKeys.length - 1];
-      const slot = dayMap.get(targetDay)!;
+      // If due date is before the window start (overdue), place on first visible day
+      const targetDay = dayKeys.length > 0 ? dayKeys[dayKeys.length - 1] : firstDayKey;
+      if (!targetDay) continue;
+      const slot = dayMap.get(targetDay);
+      if (!slot) continue;
       slot.tasks.push({ key: task.key, title: task.title, hours: task.estimatedH, color: getColor(task.title) });
       slot.freeH = Math.max(0, slot.freeH - task.estimatedH);
       if (slot.freeH <= 0) slot.overloaded = true;
     }
 
     for (const task of tasks.filter(t => !t.dueDate)) {
-      const firstDay = days[0];
-      if (!firstDay) continue;
-      const slot = dayMap.get(fmtDate(firstDay))!;
+      if (!firstDayKey) continue;
+      const slot = dayMap.get(firstDayKey);
+      if (!slot) continue;
       slot.tasks.push({ key: task.key, title: task.title, hours: task.estimatedH, color: getColor(task.title) });
       slot.freeH = Math.max(0, slot.freeH - task.estimatedH);
       if (slot.freeH <= 0) slot.overloaded = true;
