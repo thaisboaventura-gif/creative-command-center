@@ -484,10 +484,10 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
       seen.add(child.key);
     }
   }
-  // Any remaining active tasks not yet shown (subtasks whose parents aren't in list)
+  // Any remaining active tasks not yet shown (orphan subtasks whose parents aren't in list → show as parent)
   for (const t of tasks) {
     if (seen.has(t.key) || !activeKeys.has(t.key)) continue;
-    rows.push({ task: t, isChild: !!t.parentKey, color: colorMap.get(t.key) ?? "#80B0E8" });
+    rows.push({ task: t, isChild: false, color: colorMap.get(t.key) ?? "#80B0E8" });
     seen.add(t.key);
   }
 
@@ -582,12 +582,18 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
           {visibleRows.map(({ task, isChild, color }) => {
             const effectiveH = customHours[task.key] ?? task.estimatedH;
             const isOverdue = task.dueDate ? task.dueDate < today : false;
+            const dueSoon = !isOverdue && task.dueDate
+              ? (() => { const d = new Date(task.dueDate); const t2 = new Date(today); return (d.getTime() - t2.getTime()) / 86400000 <= 4; })()
+              : false;
+            const statusEmoji = !task.dueDate ? "" : isOverdue ? "🔴" : dueSoon ? "🟡" : "🟢";
             const dueColIdx = task.dueDate
               ? (() => { const i = dayStrs.findIndex(d => d >= task.dueDate!); return i === -1 ? dayStrs.length - 1 : i; })()
               : -1;
-            // Estimate start: work backwards from due date
             const estDays = data.member.dailyH > 0 ? Math.max(1, Math.ceil(effectiveH / data.member.dailyH)) : 1;
             const startColIdx = dueColIdx >= 0 ? Math.max(0, dueColIdx - estDays + 1) : -1;
+            const rowBg = isChild ? color + "10" : isOverdue ? "#fff1f2" : color + "18";
+            const barBg = isOverdue ? "#fca5a540" : color + "55";
+            const barStripe = isOverdue ? "#f59e0b" : color;
 
             return (
               <div
@@ -595,54 +601,61 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
                 style={{
                   display: "grid",
                   gridTemplateColumns: `${nameColW}px repeat(${dayStrs.length}, 1fr)`,
-                  borderBottom: `1px solid ${isChild ? "#f5f5f5" : "#ebebeb"}`,
-                  background: isChild ? "transparent" : "#fafafa",
+                  borderBottom: `1px solid ${isChild ? "#f0f0f0" : "#e5e7eb"}`,
                   alignItems: "stretch",
                 }}
               >
                 {/* Name cell */}
                 <div style={{
-                  padding: isChild ? "3px 8px 3px 24px" : "5px 8px 5px 10px",
-                  display: "flex", alignItems: "flex-start", gap: 5, position: "relative",
+                  padding: isChild ? "3px 8px 3px 20px" : "5px 8px 5px 8px",
+                  display: "flex", alignItems: "flex-start", gap: 4, position: "relative",
                   borderRight: "1px solid #e5e7eb",
-                  minHeight: isChild ? 24 : 28,
+                  minHeight: isChild ? 24 : 30,
+                  background: rowBg,
+                  borderLeft: isChild ? "none" : `3px solid ${color}`,
                 }}>
                   {isChild
-                    ? <span style={{ fontSize: 10, color: "#d1d5db", flexShrink: 0, marginTop: 2, lineHeight: 1 }}>└</span>
+                    ? <span style={{ fontSize: 9, color: "#c4c4c4", flexShrink: 0, marginTop: 2, lineHeight: 1 }}>└</span>
                     : <>
                         {childrenByParent.has(task.key) && (
                           <button
                             onClick={() => toggleParent(task.key)}
-                            style={{ fontSize: 9, background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", color: "#9ca3af", flexShrink: 0, lineHeight: 1, marginTop: 2 }}
+                            style={{ fontSize: 8, background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", color: "#9ca3af", flexShrink: 0, lineHeight: 1, marginTop: 3 }}
                             title={collapsedParents.has(task.key) ? "Expandir subtasks" : "Recolher subtasks"}
                           >
                             {collapsedParents.has(task.key) ? "▶" : "▼"}
                           </button>
                         )}
-                        <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0, marginTop: 3 }} />
                       </>
                   }
-                  <a
-                    href={`${JIRA}/${task.key}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onMouseEnter={e => setTooltip({ text: `${task.key} · ${task.title} · ${fmtH(effectiveH)}${task.dueDate ? ` · 📅 ${ddmm(task.dueDate)}` : ""}`, x: e.clientX, y: e.clientY })}
-                    onMouseMove={e => setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
-                    onMouseLeave={() => setTooltip(null)}
-                    style={{
-                      fontSize: isChild ? 9 : 10,
-                      fontWeight: isChild ? 400 : 700,
-                      color: isChild ? "#6b7280" : "#111",
-                      textDecoration: "none",
-                      wordBreak: "break-word",
-                      whiteSpace: "normal",
-                      lineHeight: 1.35,
-                      flex: 1,
-                    }}
-                  >
-                    {task.title}
-                  </a>
-                  {/* Resize drag handle on every row */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a
+                      href={`${JIRA}/${task.key}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onMouseEnter={e => setTooltip({ text: `${task.key} · ${task.title} · ${fmtH(effectiveH)}${task.dueDate ? ` · 📅 ${ddmm(task.dueDate)}` : ""}`, x: e.clientX, y: e.clientY })}
+                      onMouseMove={e => setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
+                      onMouseLeave={() => setTooltip(null)}
+                      style={{
+                        fontSize: isChild ? 9 : 10,
+                        fontWeight: isChild ? 400 : 700,
+                        color: isChild ? "#6b7280" : "#111",
+                        textDecoration: "none",
+                        wordBreak: "break-word",
+                        whiteSpace: "normal",
+                        lineHeight: 1.35,
+                        display: "block",
+                      }}
+                    >
+                      {task.title}
+                    </a>
+                    {!isChild && task.dueDate && (
+                      <div style={{ fontSize: 8, color: isOverdue ? "#ef4444" : "#9ca3af", marginTop: 1, lineHeight: 1 }}>
+                        {statusEmoji} {isOverdue ? "Atrasado · " : ""}{ddmm(task.dueDate)}
+                      </div>
+                    )}
+                  </div>
+                  {/* Resize drag handle */}
                   <div
                     onMouseDown={onResizeMouseDown}
                     style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 12, cursor: "col-resize", zIndex: 5 }}
@@ -653,35 +666,41 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
                 {dayStrs.map((dayStr, i) => {
                   const inBar = dueColIdx >= 0 && i >= startColIdx && i <= dueColIdx;
                   const isDue = i === dueColIdx && task.dueDate;
+                  const isStart = i === startColIdx;
                   return (
                     <div key={dayStr} style={{
                       position: "relative",
-                      minHeight: isChild ? 24 : 28,
-                      borderLeft: i === SEP_IDX ? "3px solid #374151" : "1px solid #f0f0f0",
-                      background: inBar
-                        ? (isOverdue ? "#fee2e250" : color + (isChild ? "22" : "30"))
-                        : "transparent",
+                      minHeight: isChild ? 24 : 30,
+                      borderLeft: i === SEP_IDX ? "3px solid #374151" : "1px solid #e8e8e8",
+                      background: inBar ? barBg : rowBg,
                     }}>
-                      {/* Bar fill line */}
-                      {inBar && !isChild && (
+                      {/* Full-height bar */}
+                      {inBar && (
                         <div style={{
-                          position: "absolute", bottom: 6, left: i === startColIdx ? 4 : 0, right: i === dueColIdx ? 4 : 0,
-                          height: 6, background: isOverdue ? "#f59e0b" : color,
-                          borderRadius: i === startColIdx && i === dueColIdx ? 3 : i === startColIdx ? "3px 0 0 3px" : i === dueColIdx ? "0 3px 3px 0" : 0,
-                          opacity: 0.85,
+                          position: "absolute",
+                          top: isChild ? 6 : 8,
+                          bottom: isChild ? 6 : 8,
+                          left: isStart ? 3 : 0,
+                          right: isDue ? 3 : 0,
+                          background: barStripe,
+                          borderRadius: isStart && isDue ? 3 : isStart ? "3px 0 0 3px" : isDue ? "0 3px 3px 0" : 0,
+                          opacity: isChild ? 0.45 : 0.75,
                         }} />
                       )}
-                      {/* Due date marker */}
-                      {isDue && (
+                      {/* Due date label */}
+                      {isDue && !isChild && (
                         <div style={{
-                          position: "absolute", right: 2, top: 2, bottom: 2, width: isChild ? 3 : 5,
-                          background: isOverdue ? "#ef4444" : color,
-                          borderRadius: 2,
-                        }} />
+                          position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                          fontSize: 7, fontWeight: 800, color: isOverdue ? "#ef4444" : color,
+                          lineHeight: 1, pointerEvents: "none", zIndex: 2,
+                          textShadow: "0 0 4px white",
+                        }}>
+                          {statusEmoji}
+                        </div>
                       )}
                       {/* Today line */}
                       {dayStr === today && (
-                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "#10b981", opacity: 0.6 }} />
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "#10b981", opacity: 0.7, zIndex: 3 }} />
                       )}
                     </div>
                   );
@@ -754,7 +773,8 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
     setTaskSplits(splits);
     setBlockOverrides(overrides);
     setFreelaKeys(fk);
-    setSplitView(localStorage.getItem(`agenda_splitview_${member.key}`) === "1");
+    const svStored = localStorage.getItem(`agenda_splitview_${member.key}`);
+    setSplitView(svStored === null ? true : svStored === "1");
   }, [member.key]);
 
   function toggleFreela(taskKey: string) {
