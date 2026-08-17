@@ -382,7 +382,6 @@ Seja direto e conciso.`;
         project: { key: "BDSL" },
         summary: title,
         issuetype: { name: "Task" },
-        timeoriginalestimate: Math.round(estH * 3600),
         customfield_15854: { value: "Brasil" },
       };
       if (dueDate) fields.duedate = dueDate;
@@ -392,6 +391,17 @@ Seja direto e conciso.`;
         method: "POST",
         body: JSON.stringify({ fields }),
       });
+
+      // Set time estimate via PUT (edit screen allows it even when create screen doesn't)
+      if (estH && created.key) {
+        try {
+          await jiraFetch(`/rest/api/3/issue/${created.key}`, {
+            method: "PUT",
+            body: JSON.stringify({ fields: { timeoriginalestimate: Math.round(estH * 3600) } }),
+          });
+        } catch { /* non-fatal — issue was created successfully */ }
+      }
+
       return NextResponse.json({ ok: true, key: created.key });
     }
 
