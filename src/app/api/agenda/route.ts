@@ -378,11 +378,11 @@ Seja direto e conciso.`;
       const member = memberKey ? TEAM_MEMBERS.find(m => m.key === memberKey) : null;
       const estH = estimatedH ?? 2;
 
+      // Only fields guaranteed on the create screen
       const fields: Record<string, unknown> = {
         project: { key: "BDSL" },
         summary: title,
         issuetype: { name: "Task" },
-        customfield_15854: { value: "Brasil" },
       };
       if (dueDate) fields.duedate = dueDate;
       if (member?.accountId) fields.assignee = { accountId: member.accountId };
@@ -392,14 +392,27 @@ Seja direto e conciso.`;
         body: JSON.stringify({ fields }),
       });
 
-      // Set time estimate via PUT (edit screen allows it even when create screen doesn't)
-      if (estH && created.key) {
-        try {
-          await jiraFetch(`/rest/api/3/issue/${created.key}`, {
-            method: "PUT",
-            body: JSON.stringify({ fields: { timeoriginalestimate: Math.round(estH * 3600) } }),
-          });
-        } catch { /* non-fatal — issue was created successfully */ }
+      if (created.key) {
+        // Set Country via PUT — try multiple candidate fields (same as nova-demanda)
+        const COUNTRY_CANDIDATES = ["customfield_15854", "customfield_21359", "customfield_10670"];
+        for (const cf of COUNTRY_CANDIDATES) {
+          try {
+            const res = await jiraFetch(`/rest/api/3/issue/${created.key}`, {
+              method: "PUT",
+              body: JSON.stringify({ fields: { [cf]: [{ value: "Brasil" }] } }),
+            });
+            if (res !== null) break;
+          } catch { /* try next */ }
+        }
+        // Set time estimate via PUT (edit screen allows it even when create screen doesn't)
+        if (estH) {
+          try {
+            await jiraFetch(`/rest/api/3/issue/${created.key}`, {
+              method: "PUT",
+              body: JSON.stringify({ fields: { timeoriginalestimate: Math.round(estH * 3600) } }),
+            });
+          } catch { /* non-fatal */ }
+        }
       }
 
       return NextResponse.json({ ok: true, key: created.key });
