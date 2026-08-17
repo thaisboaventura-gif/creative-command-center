@@ -774,7 +774,7 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
     setBlockOverrides(overrides);
     setFreelaKeys(fk);
     const svStored = localStorage.getItem(`agenda_splitview_${member.key}`);
-    setSplitView(svStored === null ? true : svStored === "1");
+    setSplitView(svStored === null ? member.key === "larissa" : svStored === "1");
   }, [member.key]);
 
   function toggleFreela(taskKey: string) {
