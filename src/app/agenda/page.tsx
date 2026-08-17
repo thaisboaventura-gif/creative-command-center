@@ -497,6 +497,11 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
   const [nameColW, setNameColW] = useState(200);
   const resizeDragRef = useRef<{ startX: number; startW: number } | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
+
+  function toggleParent(key: string) {
+    setCollapsedParents(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  }
 
   function onResizeMouseDown(e: React.MouseEvent) {
     e.preventDefault();
@@ -519,6 +524,9 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
     return <div style={{ background: "white", borderRadius: 10, border: "1px solid #eef0f3", padding: "12px 16px", textAlign: "center", color: "#d1d5db", fontSize: 11 }}>Nenhuma task ativa.</div>;
   }
 
+  // Filter out children of collapsed parents
+  const visibleRows = rows.filter(r => !r.isChild || !collapsedParents.has(r.task.parentKey!));
+
   // Week separator: between day index 4 and 5 (end of week 1 / start of week 2)
   const SEP_IDX = 5; // borderLeft on column SEP_IDX
 
@@ -528,6 +536,7 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
       <div style={{ padding: "8px 14px", borderBottom: "2px solid #f0f0f0", display: "flex", alignItems: "center", gap: 8, background: "#fafafa" }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "#111" }}>Demandas & Prazos</span>
         <span style={{ fontSize: 10, color: "#9ca3af" }}>{rows.filter(r => !r.isChild).length} tasks</span>
+        <span style={{ fontSize: 9, color: "#d1d5db" }}>{collapsedParents.size > 0 ? `· ${collapsedParents.size} recolhidas` : ""}</span>
         <span style={{ fontSize: 9, color: "#d1d5db" }}>· arraste borda ↔ para expandir</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
           <button onClick={() => setWeekOffset(p => p - 1)} style={btnStyle}>← sem</button>
@@ -570,7 +579,7 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
           </div>
 
           {/* Task rows */}
-          {rows.map(({ task, isChild, color }) => {
+          {visibleRows.map(({ task, isChild, color }) => {
             const effectiveH = customHours[task.key] ?? task.estimatedH;
             const isOverdue = task.dueDate ? task.dueDate < today : false;
             const dueColIdx = task.dueDate
@@ -600,7 +609,18 @@ function PersonGantt({ data, customHours, weekOffset, setWeekOffset }: {
                 }}>
                   {isChild
                     ? <span style={{ fontSize: 10, color: "#d1d5db", flexShrink: 0, marginTop: 2, lineHeight: 1 }}>└</span>
-                    : <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0, marginTop: 3 }} />
+                    : <>
+                        {childrenByParent.has(task.key) && (
+                          <button
+                            onClick={() => toggleParent(task.key)}
+                            style={{ fontSize: 9, background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", color: "#9ca3af", flexShrink: 0, lineHeight: 1, marginTop: 2 }}
+                            title={collapsedParents.has(task.key) ? "Expandir subtasks" : "Recolher subtasks"}
+                          >
+                            {collapsedParents.has(task.key) ? "▶" : "▼"}
+                          </button>
+                        )}
+                        <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0, marginTop: 3 }} />
+                      </>
                   }
                   <a
                     href={`${JIRA}/${task.key}`}
@@ -704,6 +724,8 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
   const [taskSplits, setTaskSplits] = useState<Record<string, DaySplit>>({});
   const [blockOverrides, setBlockOverrides] = useState<Record<string, BlockOverride>>({});
   const [splitModal, setSplitModal] = useState<{ key: string; title: string; totalH: number } | null>(null);
+  const [freelaKeys, setFreelaKeys] = useState<Set<string>>(new Set());
+  const [splitView, setSplitView] = useState(false);
 
   // Ref-based drag — no stale closures, no listener churn
   const dragStateRef = useRef<DragState | null>(null);
@@ -716,6 +738,7 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
   useEffect(() => {
     const splits: Record<string, DaySplit> = {};
     const overrides: Record<string, BlockOverride> = {};
+    const fk = new Set<string>();
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
       if (k.startsWith("agenda_split_")) {
@@ -724,10 +747,37 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
       if (k.startsWith("agenda_blkpos_")) {
         try { overrides[k.replace("agenda_blkpos_", "")] = JSON.parse(localStorage.getItem(k)!); } catch { /* skip */ }
       }
+      if (k.startsWith(`agenda_freela_${member.key}_`)) {
+        fk.add(k.replace(`agenda_freela_${member.key}_`, ""));
+      }
     }
     setTaskSplits(splits);
     setBlockOverrides(overrides);
-  }, []);
+    setFreelaKeys(fk);
+    setSplitView(localStorage.getItem(`agenda_splitview_${member.key}`) === "1");
+  }, [member.key]);
+
+  function toggleFreela(taskKey: string) {
+    setFreelaKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(taskKey)) {
+        next.delete(taskKey);
+        localStorage.removeItem(`agenda_freela_${member.key}_${taskKey}`);
+      } else {
+        next.add(taskKey);
+        localStorage.setItem(`agenda_freela_${member.key}_${taskKey}`, "1");
+      }
+      return next;
+    });
+  }
+
+  function toggleSplitView() {
+    setSplitView(prev => {
+      const next = !prev;
+      localStorage.setItem(`agenda_splitview_${member.key}`, next ? "1" : "0");
+      return next;
+    });
+  }
 
   // Limit to 1 or 2 weeks
   const displayDays = twoWeeks ? allDays : allDays.slice(0, 5);
@@ -827,6 +877,12 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
               <div style={{ fontSize: 8, color: day.overloaded ? "#d97706" : "#9ca3af", marginTop: 2 }}>
                 {day.overloaded ? `⚠ +${fmtH(Math.abs(day.freeH))}` : `${fmtH(day.freeH)} livre`}
               </div>
+              {splitView && (
+                <div style={{ display: "flex", borderTop: "1px solid #f0f0f0", marginTop: 3 }}>
+                  <div style={{ flex: 1, fontSize: 7, textAlign: "center", color: "#6b7280", padding: "2px 0", fontWeight: 600 }}>{member.display.split(" ")[0]}</div>
+                  <div style={{ flex: 1, fontSize: 7, textAlign: "center", color: "#8b5cf6", padding: "2px 0", borderLeft: "1px dashed #e5e7eb", fontWeight: 600 }}>freela</div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -863,6 +919,8 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
                 ))}
                 {/* Capacity line */}
                 <div style={{ position: "absolute", top: member.dailyH * PX_PER_HOUR, left: 0, right: 0, borderTop: "1px dashed #bbf7d0", zIndex: 2 }} />
+                {/* Split view: center divider */}
+                {splitView && <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#e5e7eb", zIndex: 1 }} />}
 
                 {/* Schedule blocks (🔒) */}
                 {dayBlocks.map(block => {
@@ -883,9 +941,13 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
                   const recStored = (() => { try { const r = localStorage.getItem(`agenda_recording_${t.key}`); return r ? JSON.parse(r) : null; } catch { return null; } })();
                   const isSplit = !!taskSplits[t.key];
                   const isBeingDragged = ghostBlock?.key === t.key;
+                  const isFreela = freelaKeys.has(t.key);
                   const top = (t.startH - START_H) * PX_PER_HOUR;
                   const height = Math.max(t.hours * PX_PER_HOUR, 18);
                   const bg = t.color;
+                  const blockLeft = splitView ? (isFreela ? "calc(50% + 1px)" : "1px") : "2px";
+                  const blockRight = splitView ? "1px" : "2px";
+                  const blockWidth = splitView ? "calc(50% - 3px)" : undefined;
 
                   return (
                     <div
@@ -900,7 +962,8 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
                         position: "absolute",
                         top: top + 1,
                         height: height - 2,
-                        left: 2, right: 2,
+                        left: blockLeft,
+                        ...(blockWidth ? { width: blockWidth } : { right: blockRight }),
                         background: isBeingDragged ? bg + "20" : bg + "18",
                         borderLeft: `3px solid ${bg}`,
                         borderRadius: "0 4px 4px 0",
@@ -928,6 +991,10 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
                               style={{ fontSize: 8, color: "#6b7280", background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", lineHeight: 1 }}>✎</button>
                             <button title="Dividir em dias" onClick={e => { e.stopPropagation(); const task = taskMap.get(t.key); if (task) setSplitModal({ key: t.key, title: t.title, totalH: customHours[t.key] ?? task.estimatedH }); }}
                               style={{ fontSize: 8, color: "#059669", background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", lineHeight: 1 }}>⊕</button>
+                            {splitView && (
+                              <button title={isFreela ? "Mover para demandas próprias" : "Mover para freela"} onClick={e => { e.stopPropagation(); toggleFreela(t.key); }}
+                                style={{ fontSize: 8, color: isFreela ? "#8b5cf6" : "#9ca3af", background: "transparent", border: "none", cursor: "pointer", padding: "0 1px", lineHeight: 1, fontWeight: isFreela ? 700 : 400 }}>F</button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -994,11 +1061,18 @@ function WeekCalendar({ data, customHours, scheduleBlocks, twoWeeks, setTwoWeeks
         <span style={{ fontSize: 10, color: "#9ca3af" }}>
           ▸ Ver lista de tasks ({tasks.filter(t => displayTaskKeys.has(t.key)).length}) · registrar horas reais
         </span>
-        <button
-          onClick={() => setTwoWeeks(!twoWeeks)}
-          style={{ ...btnStyle, fontSize: 10, padding: "3px 10px" }}>
-          {twoWeeks ? "← Ver só semana atual" : "Ver 2 semanas →"}
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={() => toggleSplitView()}
+            style={{ ...btnStyle, fontSize: 10, padding: "3px 10px", color: splitView ? "#8b5cf6" : undefined, borderColor: splitView ? "#8b5cf6" : undefined }}>
+            {splitView ? "✦ Split freela" : "Split freela"}
+          </button>
+          <button
+            onClick={() => setTwoWeeks(!twoWeeks)}
+            style={{ ...btnStyle, fontSize: 10, padding: "3px 10px" }}>
+            {twoWeeks ? "← Ver só semana atual" : "Ver 2 semanas →"}
+          </button>
+        </div>
       </div>
 
       {splitModal && (
