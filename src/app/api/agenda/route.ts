@@ -184,7 +184,11 @@ export async function GET(req: Request) {
     });
 
     // Build daily slots
-    const PALETTE = ["#80B0E8","#008471","#D1CAEA","#F4D242","#C45F3F","#898E46","#FFC0C0","#F29CC3"];
+    const PALETTE = [
+      "#4A90D9","#27AE60","#F39C12","#8E44AD","#16A085",
+      "#E91E8C","#2980B9","#D35400","#1ABC9C","#6C3483",
+      "#148F77","#BA4A00","#2471A3","#A04000","#117864",
+    ];
     const projectColorMap = new Map<string, string>();
     let colorIdx = 0;
     function getColor(title: string): string {
@@ -365,6 +369,30 @@ Seja direto e conciso.`;
         body: JSON.stringify({ fields: { duedate: newDate } }),
       });
       return NextResponse.json({ ok: true });
+    }
+
+    if (action === "create_task") {
+      const { title, memberKey, dueDate, estimatedH } = body as {
+        title: string; memberKey?: string; dueDate?: string; estimatedH?: number;
+      };
+      const member = memberKey ? TEAM_MEMBERS.find(m => m.key === memberKey) : null;
+      const estH = estimatedH ?? 2;
+
+      const fields: Record<string, unknown> = {
+        project: { key: "BDSL" },
+        summary: title,
+        issuetype: { name: "Task" },
+        timeoriginalestimate: Math.round(estH * 3600),
+        customfield_15854: { value: "Brasil" },
+      };
+      if (dueDate) fields.duedate = dueDate;
+      if (member?.accountId) fields.assignee = { accountId: member.accountId };
+
+      const created = await jiraFetch("/rest/api/3/issue", {
+        method: "POST",
+        body: JSON.stringify({ fields }),
+      });
+      return NextResponse.json({ ok: true, key: created.key });
     }
 
     return NextResponse.json({ error: "Ação desconhecida" }, { status: 400 });
