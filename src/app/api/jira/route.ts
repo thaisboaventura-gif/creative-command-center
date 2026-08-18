@@ -423,7 +423,6 @@ export async function GET() {
       });
     }
 
-    const WEEKLY_HOURS = 40;
     const team = Array.from(teamMap.values())
       .map((m) => ({
         ...m,
