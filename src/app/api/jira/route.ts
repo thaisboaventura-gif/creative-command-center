@@ -125,10 +125,11 @@ async function fetchAllIssues(
   const qf = FIELDS.map((f) => `fields=${f}`).join("&");
   const all: JiraIssue[] = [];
   const pageSize = 100;
-  let startAt = 0;
+  let cursor: string | null = null;
 
   while (all.length < hardCap) {
-    const url = `${base}/rest/api/3/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${pageSize}&${qf}`;
+    const cursorParam = cursor ? `&nextPageToken=${encodeURIComponent(cursor)}` : "";
+    const url = `${base}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${pageSize}&${qf}${cursorParam}`;
     const res = await fetch(url, { headers });
     if (!res.ok) {
       const errBody = await res.text().catch(() => "(sem body)");
@@ -138,9 +139,9 @@ async function fetchAllIssues(
     const data = await res.json();
     const issues: JiraIssue[] = Array.isArray(data.issues) ? data.issues : [];
     all.push(...issues);
-    console.log(`[jira] página startAt=${startAt} got=${issues.length} total=${data.total} jql="${jql.slice(0, 80)}"`);
-    if (all.length >= (data.total ?? 0) || issues.length < pageSize) break;
-    startAt += pageSize;
+    console.log(`[jira] página cursor=${cursor ?? "inicio"} got=${issues.length} nextToken=${data.nextPageToken ?? "fim"} jql="${jql.slice(0, 80)}"`);
+    if (!data.nextPageToken || issues.length < pageSize) break;
+    cursor = data.nextPageToken as string;
   }
 
   return all;
