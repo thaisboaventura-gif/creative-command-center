@@ -147,22 +147,27 @@ async function fetchAllIssues(
   return all;
 }
 
-export async function GET() {
-  console.log("[jira] iniciando request");
+export async function GET(_req: Request) {
+  console.log("[jira] GET chamado — início absoluto");
   try {
+    const base  = process.env.JIRA_BASE_URL?.trim();
     const email = process.env.JIRA_EMAIL?.trim();
     const token = process.env.JIRA_API_TOKEN?.trim();
-    const base = process.env.JIRA_BASE_URL?.trim();
     const project = process.env.JIRA_PROJECT_KEY?.trim() || "BDSL";
 
-    console.log("[jira] env check — base:", base ? "ok" : "AUSENTE", "email:", email ? "ok" : "AUSENTE", "token:", token ? "ok" : "AUSENTE");
+    console.log("[jira] base:", base ? "ok" : "VAZIO");
+    console.log("[jira] email:", email ? "ok" : "VAZIO");
+    console.log("[jira] token:", token ? "ok" : "VAZIO");
 
-    if (!email || !token || !base) {
+    if (!base || !email || !token) {
+      console.error("[jira] FALTANDO ENV VARS — retornando erro");
       return NextResponse.json(
         { error: "Env vars ausentes", team: [], alerts: [], newDemands: [] },
         { status: 500 }
       );
     }
+
+    console.log("[jira] env vars ok — iniciando queries");
 
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
@@ -517,9 +522,9 @@ export async function GET() {
       },
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error("[jira] erro completo:", msg);
+    console.error("[jira] ERRO NO CATCH:", error);
     console.error("[jira] stack:", error instanceof Error ? error.stack : "(sem stack)");
+    const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       { error: msg, team: [], alerts: [], newDemands: [] },
       { status: 500 }
