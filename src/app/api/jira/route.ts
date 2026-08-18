@@ -122,6 +122,8 @@ async function fetchAllIssues(
     Authorization: `Basic ${auth}`,
     Accept: "application/json",
   };
+  // cache: 'no-store' prevents Next.js from serving stale Jira responses from the Data Cache
+  const fetchOpts: RequestInit = { headers, cache: "no-store" };
   const qf = FIELDS.map((f) => `fields=${f}`).join("&");
   const all: JiraIssue[] = [];
   const pageSize = 100;
@@ -130,7 +132,7 @@ async function fetchAllIssues(
   while (all.length < hardCap) {
     const cursorParam = cursor ? `&nextPageToken=${encodeURIComponent(cursor)}` : "";
     const url = `${base}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${pageSize}&${qf}${cursorParam}`;
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, fetchOpts);
     if (!res.ok) {
       const errBody = await res.text().catch(() => "(sem body)");
       console.error(`[jira] fetch falhou status=${res.status} jql="${jql.slice(0, 120)}" body=${errBody.slice(0, 300)}`);
