@@ -130,10 +130,15 @@ async function fetchAllIssues(
   while (all.length < hardCap) {
     const url = `${base}/rest/api/3/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${pageSize}&${qf}`;
     const res = await fetch(url, { headers });
-    if (!res.ok) break;
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "(sem body)");
+      console.error(`[jira] fetch falhou status=${res.status} jql="${jql.slice(0, 120)}" body=${errBody.slice(0, 300)}`);
+      break;
+    }
     const data = await res.json();
     const issues: JiraIssue[] = Array.isArray(data.issues) ? data.issues : [];
     all.push(...issues);
+    console.log(`[jira] página startAt=${startAt} got=${issues.length} total=${data.total} jql="${jql.slice(0, 80)}"`);
     if (all.length >= (data.total ?? 0) || issues.length < pageSize) break;
     startAt += pageSize;
   }
@@ -142,11 +147,14 @@ async function fetchAllIssues(
 }
 
 export async function GET() {
+  console.log("[jira] iniciando request");
   try {
     const email = process.env.JIRA_EMAIL?.trim();
     const token = process.env.JIRA_API_TOKEN?.trim();
     const base = process.env.JIRA_BASE_URL?.trim();
     const project = process.env.JIRA_PROJECT_KEY?.trim() || "BDSL";
+
+    console.log("[jira] env check — base:", base ? "ok" : "AUSENTE", "email:", email ? "ok" : "AUSENTE", "token:", token ? "ok" : "AUSENTE");
 
     if (!email || !token || !base) {
       return NextResponse.json(
@@ -186,6 +194,10 @@ export async function GET() {
 
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
     const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status not in ("Backlog", "Cancelado") ORDER BY created DESC`;
+
+    console.log("[jira] boardJqlActive:", boardJqlActive);
+    console.log("[jira] subJqlActive:", subJqlActive);
+    console.log("[jira] wStart:", wStart, "wEnd:", wEnd);
 
     const [boardActive, boardDone, subActive, subDone, newIssues, thaisUnassigned] = await Promise.all([
       fetchAllIssues(base, auth, boardJqlActive, 600),
@@ -495,7 +507,8 @@ export async function GET() {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error("Jira API error:", msg);
+    console.error("[jira] erro completo:", msg);
+    console.error("[jira] stack:", error instanceof Error ? error.stack : "(sem stack)");
     return NextResponse.json(
       { error: msg, team: [], alerts: [], newDemands: [] },
       { status: 500 }
