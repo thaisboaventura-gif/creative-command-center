@@ -150,7 +150,8 @@ export async function GET() {
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
     // statusCategory = Done covers ALL done statuses regardless of name (Done, Entregue, Concluído, etc.)
-    const boardJql = `project = ${project} AND statusCategory != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
+    // issuetype not in subTaskIssueTypes() keeps subtasks out of the board — they come via subJql only
+    const boardJql = `project = ${project} AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
     // Query 3: active subtasks assigned to any team member
     const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory != Done AND status != Backlog`;
