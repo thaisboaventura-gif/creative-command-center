@@ -19,12 +19,12 @@ interface JiraIssue {
 }
 
 const TEAM_FILTER = [
-  "eduardo", "oliveira",
+  "eduardo",
   "gasparetto",
   "gabriel", "cassino",
   "larissa", "delarue",
-  "francisco", "fernandes",
-  "joao", "camargo",
+  "francisco",
+  "joao",
   "beatriz", "pusso",
   "rafaela", "ceragioli",
 ];
@@ -415,7 +415,7 @@ export async function GET(_req: Request) {
       if (!isBrasil(sub)) continue;
       if (!activeParentKeys.has(parentKey)) continue; // skip subtasks of backlog parents
       const member = teamMap.get(name)!;
-      if (!member.tasks.some((t) => t.key === parentKey)) continue; // only if parent is visible
+      const parentVisible = member.tasks.some((t) => t.key === parentKey);
       const est = estimateHours(sub.fields.summary, sub.fields.timeoriginalestimate);
       member.tasks.push({
         id: sub.key, key: sub.key, title: sub.fields.summary,
@@ -424,7 +424,7 @@ export async function GET(_req: Request) {
         assignee: name, dueDate: sub.fields.duedate || null,
         estimatedHours: est.hours, estimatedDetail: est.detail,
         createdAt: sub.fields.created?.split("T")[0] || "",
-        parentKey,
+        parentKey: parentVisible ? parentKey : undefined,
       });
     }
 
