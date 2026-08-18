@@ -82,10 +82,15 @@ const FIELDS = [
   ...COUNTRY_FIELDS,
 ];
 
-// Jira usernames used for the subtask-assignee lookup
+// Jira accountIds used for the subtask-assignee lookup
 const TEAM_USERNAMES = [
-  "eduardo.oliveira", "eduardo.gasparetto", "larissa.delarue", "joao.camargo",
-  "beatriz", "rafaela.ceragioli", "francisco.fernandes",
+  "712020:4648823a-0cdc-4178-b186-597098121542", // Eduardo Oliveira
+  "61aa13d5c75da800721a2623",                     // Eduardo Gasparetto
+  "61b39fc4d2e64c0071f160d5",                     // Larissa Delarue
+  "712020:2ee0f456-77e7-4f2a-8502-ff712b3ba6da", // João Camargo
+  "6425a53f67102fc717c2902d",                     // Beatriz de Souza Pusso
+  "712020:e2200010-bf69-4f6e-87a4-a792c42d8837", // Rafaela Ceragioli
+  "712020:e22b3767-90e9-47d2-92cd-ef84adafaac6", // Francisco Fernandes
   // gabriel.cassino sem conta Jira ainda — não entra no JQL
 ];
 
@@ -201,7 +206,7 @@ export async function GET(_req: Request) {
     const subJqlDone = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory = Done AND duedate >= "${wStart}" AND duedate <= "${wEnd}"`;
 
     const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
-    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status not in ("Backlog", "Cancelado") ORDER BY created DESC`;
+    const thaisJql = `project = ${project} AND reporter = "712020:1367b7ec-590a-42ff-b7d4-b98a2208f633" AND assignee is EMPTY AND statusCategory != Done AND status not in ("Backlog", "Cancelado") ORDER BY created DESC`;
 
     console.log("[jira] boardJqlActive:", boardJqlActive);
     console.log("[jira] subJqlActive:", subJqlActive);
@@ -246,45 +251,6 @@ export async function GET(_req: Request) {
       console.log("[jira] tasks descartadas por país:", descartadasPais.map(i => `${i.key} ${i.fields.summary?.slice(0, 30)}`));
     }
 
-    // ── DIAGNÓSTICO DETALHADO ────────────────────────────────────────────
-    console.log("[diag] total boardIssues antes de qualquer filtro:", boardIssues.length);
-    console.log("[diag] total teamIssues após filtro time+brasil:", teamIssues.length);
-
-    const eduardoBoard = boardIssues.filter(i =>
-      i.fields.assignee?.displayName?.toLowerCase().includes("eduardo")
-    );
-    console.log("[diag] tasks Eduardo no boardIssues:", eduardoBoard.map(i =>
-      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name}`
-    ));
-
-    const gasparettoBoard = boardIssues.filter(i =>
-      i.fields.assignee?.displayName?.toLowerCase().includes("gasparetto")
-    );
-    console.log("[diag] tasks Gasparetto no boardIssues:", gasparettoBoard.map(i =>
-      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name}`
-    ));
-
-    const eduardoSubs = teamSubs.filter(i =>
-      i.fields.assignee?.displayName?.toLowerCase().includes("eduardo")
-    );
-    console.log("[diag] tasks Eduardo no teamSubs:", eduardoSubs.map(i =>
-      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name} | parent:${(i.fields.parent as {key:string}|null)?.key ?? "N/A"}`
-    ));
-
-    const gasparettoSubs = teamSubs.filter(i =>
-      i.fields.assignee?.displayName?.toLowerCase().includes("gasparetto")
-    );
-    console.log("[diag] tasks Gasparetto no teamSubs:", gasparettoSubs.map(i =>
-      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name} | parent:${(i.fields.parent as {key:string}|null)?.key ?? "N/A"}`
-    ));
-
-    const descartadasGeral = boardIssues.filter(i =>
-      !teamIssues.find(t => t.key === i.key)
-    );
-    console.log("[diag] todos descartados (boardIssues - teamIssues):", descartadasGeral.map(i =>
-      `${i.key} | assignee:${i.fields.assignee?.displayName ?? "N/A"} | país:${JSON.stringify(i.fields.customfield_15854)}`
-    ));
-    // ── FIM DIAGNÓSTICO ──────────────────────────────────────────────────
 
     // Build map: parentKey → set of team-member display names who have a child task there.
     // Two sources:
