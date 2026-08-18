@@ -187,6 +187,63 @@ function layoutBars(tasks: TaskItem[], days: Date[], startOverrides: Record<stri
   return candidates;
 }
 
+/* ── Daily schedule ── */
+
+function getDailyCap(name: string): { regular: number; freela: number } {
+  const k = name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(" ")[0].split(".")[0];
+  const map: Record<string, { regular: number; freela: number }> = {
+    eduardo:    { regular: 6.5, freela: 0 },
+    gasparetto: { regular: 6.5, freela: 0 },
+    gabriel:    { regular: 6.5, freela: 0 },
+    larissa:    { regular: 6.5, freela: 4 },
+    francisco:  { regular: 6.5, freela: 0 },
+    joao:       { regular: 3,   freela: 0 },
+    beatriz:    { regular: 3,   freela: 0 },
+    rafa:       { regular: 8,   freela: 0 },
+  };
+  return map[k] ?? { regular: 6.5, freela: 0 };
+}
+
+interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela" }
+
+function buildSchedule(tasks: TaskItem[], days: Date[], cap: { regular: number; freela: number }): Map<string, DaySlot[]> {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
+  const slots = new Map<string, DaySlot[]>(days.map(d => [formatLocalDate(d), []]));
+
+  const active = tasks
+    .filter(t => t.status !== "done" && t.estimatedHours > 0 && t.dueDate)
+    .sort((a, b) => parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime());
+
+  for (const task of active) {
+    let rem = task.estimatedHours;
+    const deadline = parseLocalDate(task.dueDate!);
+    const eligible = days
+      .filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; })
+      .slice().reverse();
+
+    for (const d of eligible) {
+      if (rem <= 0) break;
+      const key = formatLocalDate(d);
+      const l = load.get(key)!;
+      const rAvail = Math.max(0, cap.regular - l.r);
+      const fAvail = Math.max(0, cap.freela - l.f);
+      if (rAvail > 0) {
+        const h = Math.min(rem, rAvail); l.r += h; rem -= h;
+        slots.get(key)!.push({ task, hours: h, pool: "regular" });
+      } else if (fAvail > 0) {
+        const h = Math.min(rem, fAvail); l.f += h; rem -= h;
+        slots.get(key)!.push({ task, hours: h, pool: "freela" });
+      }
+    }
+  }
+  return slots;
+}
+
+function fmtH(h: number): string {
+  return (h % 1 === 0 ? h.toString() : h.toFixed(1)) + "h";
+}
+
 function statusChipProps(status: string, isOverdue: boolean): { label: string; bg: string; color: string } {
   if (isOverdue) return { label: "⚠️ Em atraso", bg: "#fee2e2", color: "#991b1b" };
   const map: Record<string, { label: string; bg: string; color: string }> = {
@@ -500,6 +557,10 @@ export default function AgendaPage() {
 
   const backlog = member ? member.tasks.filter(t => !t.dueDate && t.status !== "done").length : 0;
 
+  const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
+  const weekDays = days.slice(0, 5);
+  const schedule = member ? buildSchedule(member.tasks, weekDays, cap) : new Map<string, DaySlot[]>();
+
   return (
     <Shell>
       {/* Deadline modal */}
@@ -796,6 +857,100 @@ export default function AgendaPage() {
               </div>
 
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Daily Agenda */}
+      {member && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            📋 Agenda diária — {firstName(member.name)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+            {weekDays.map(day => {
+              const dk = formatLocalDate(day);
+              const daySlots = schedule.get(dk) ?? [];
+              const regSlots = daySlots.filter(s => s.pool === "regular");
+              const freelaSlots = daySlots.filter(s => s.pool === "freela");
+              const regUsed = regSlots.reduce((s, a) => s + a.hours, 0);
+              const freelaUsed = freelaSlots.reduce((s, a) => s + a.hours, 0);
+              const regFree = Math.max(0, cap.regular - regUsed);
+              const freelaFree = Math.max(0, cap.freela - freelaUsed);
+              const isT = sameDay(day, today);
+              const overloaded = regFree < 0.1 && (cap.freela === 0 || freelaFree < 0.1);
+
+              return (
+                <div key={dk} style={{ background: "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : "1px solid #eef0f3", overflow: "hidden" }}>
+                  {/* Day header */}
+                  <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isT ? "#f5f3ff" : "#fafafa" }}>
+                    <div>
+                      <span style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#111", marginLeft: 5 }}>{day.getDate()}/{day.getMonth() + 1}</span>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
+                      {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
+                    </span>
+                  </div>
+
+                  {/* Regular pool */}
+                  <div style={{ padding: "6px 8px 4px" }}>
+                    {cap.freela > 0 && (
+                      <div style={{ fontSize: 9, color: "#6b7280", marginBottom: 5, fontWeight: 600 }}>
+                        👤 {firstName(member.name)} — {fmtH(cap.regular)}
+                      </div>
+                    )}
+                    {regSlots.map((slot, i) => {
+                      const color = projectColor(extractProject(slot.task.title));
+                      return (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={slot.task.title}>
+                            {slot.task.title.slice(0, 26)}{slot.task.title.length > 26 ? "…" : ""}
+                          </span>
+                          <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>{fmtH(slot.hours)}</span>
+                        </div>
+                      );
+                    })}
+                    {regFree > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e5e7eb", flexShrink: 0 }} />
+                        <span style={{ fontSize: 10, color: "#9ca3af", flex: 1 }}>LIVRE</span>
+                        <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtH(regFree)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Freela pool — Larissa only */}
+                  {cap.freela > 0 && (
+                    <div style={{ padding: "6px 8px 6px", borderTop: "1px dashed #e5e7eb" }}>
+                      <div style={{ fontSize: 9, color: "#ea580c", marginBottom: 5, fontWeight: 600 }}>
+                        🤝 Freela — {fmtH(cap.freela)}
+                      </div>
+                      {freelaSlots.map((slot, i) => {
+                        const color = projectColor(extractProject(slot.task.title));
+                        return (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
+                            <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={slot.task.title}>
+                              {slot.task.title.slice(0, 26)}{slot.task.title.length > 26 ? "…" : ""}
+                            </span>
+                            <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>{fmtH(slot.hours)}</span>
+                          </div>
+                        );
+                      })}
+                      {freelaFree > 0 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e5e7eb", flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: "#9ca3af", flex: 1 }}>LIVRE</span>
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtH(freelaFree)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
