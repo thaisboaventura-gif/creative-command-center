@@ -149,37 +149,62 @@ export async function GET() {
 
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
 
-    // statusCategory = Done covers ALL done statuses regardless of name (Done, Entregue, Concluído, etc.)
-    // issuetype not in subTaskIssueTypes() keeps subtasks out of the board — they come via subJql only
-    const boardJql = `project = ${project} AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog AND assignee IS NOT EMPTY ORDER BY updated DESC`;
-    const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
-    // Query 3: active subtasks assigned to any team member
-    const subJql   = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory != Done AND status != Backlog`;
-    // Query 4: tasks created by Thais with no assignee yet
-    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status != Backlog ORDER BY created DESC`;
+    // Compute current week boundaries (Mon–Sun) for Done-this-week visibility
+    const nowDate = new Date();
+    const dow = nowDate.getDay(); // 0=Sun
+    const daysFromMon = dow === 0 ? 6 : dow - 1;
+    const weekMonday = new Date(nowDate);
+    weekMonday.setDate(nowDate.getDate() - daysFromMon);
+    weekMonday.setHours(0, 0, 0, 0);
+    const weekSunday = new Date(weekMonday);
+    weekSunday.setDate(weekMonday.getDate() + 6);
+    const wStart = weekMonday.toISOString().split("T")[0];
+    const wEnd   = weekSunday.toISOString().split("T")[0];
 
-    const [boardIssues, newIssues, teamSubsRaw, thaisUnassigned] = await Promise.all([
-      fetchAllIssues(base, auth, boardJql, 6),
+    function isDueThisWeek(duedate: string | null): boolean {
+      if (!duedate) return false;
+      return duedate >= wStart && duedate <= wEnd;
+    }
+
+    // Active parent tasks (non-subtask, non-done, non-backlog, non-cancelled)
+    const boardJqlActive = `project = ${project} AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status not in ("Backlog", "Cancelado") AND assignee IS NOT EMPTY ORDER BY updated DESC`;
+    // Done parent tasks with duedate in current week
+    const boardJqlDone = `project = ${project} AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND duedate >= "${wStart}" AND duedate <= "${wEnd}" AND assignee IS NOT EMPTY ORDER BY duedate ASC`;
+
+    // Active subtasks for team members
+    const subJqlActive = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory != Done AND status not in ("Backlog", "Cancelado")`;
+    // Done subtasks with duedate in current week
+    const subJqlDone = `project = ${project} AND issuetype in subTaskIssueTypes() AND assignee in (${TEAM_USERNAMES.join(", ")}) AND statusCategory = Done AND duedate >= "${wStart}" AND duedate <= "${wEnd}"`;
+
+    const newJql   = `project = ${project} AND created >= -14d ORDER BY created DESC`;
+    const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status not in ("Backlog", "Cancelado") ORDER BY created DESC`;
+
+    const [boardActive, boardDone, subActive, subDone, newIssues, thaisUnassigned] = await Promise.all([
+      fetchAllIssues(base, auth, boardJqlActive, 6),
+      fetchAllIssues(base, auth, boardJqlDone, 2).catch(() => [] as JiraIssue[]),
+      fetchAllIssues(base, auth, subJqlActive, 3).catch((e) => { console.error("[jira] subJqlActive failed:", e); return [] as JiraIssue[]; }),
+      fetchAllIssues(base, auth, subJqlDone, 2).catch(() => [] as JiraIssue[]),
       fetchAllIssues(base, auth, newJql, 2),
-      fetchAllIssues(base, auth, subJql, 3).catch((e) => {
-        console.error("[jira] subJql failed:", e);
-        return [] as JiraIssue[];
-      }),
-      fetchAllIssues(base, auth, thaisJql, 2).catch((e) => {
-        console.error("[jira] thaisJql failed:", e);
-        return [] as JiraIssue[];
-      }),
+      fetchAllIssues(base, auth, thaisJql, 2).catch((e) => { console.error("[jira] thaisJql failed:", e); return [] as JiraIssue[]; }),
     ]);
 
-    // Also detect team members via subtasks already embedded in boardIssues
-    // (boardIssues won't have subtask detail, but teamSubsRaw should cover it)
-    const teamSubs = teamSubsRaw;
-    console.log("[jira] teamSubs fetched:", teamSubs.length, "subJql:", subJql);
+    // Merge and deduplicate board issues and subtasks
+    const boardSeenKeys = new Set<string>();
+    const boardIssues = [...boardActive, ...boardDone].filter(i =>
+      boardSeenKeys.has(i.key) ? false : (boardSeenKeys.add(i.key), true)
+    );
+    const subSeenKeys = new Set<string>();
+    const teamSubs = [...subActive, ...subDone].filter(i =>
+      subSeenKeys.has(i.key) ? false : (subSeenKeys.add(i.key), true)
+    );
 
-    // Filter to only the direct team members AND country = Brasil (explicit only — no fallback)
+    console.log("[jira] boardIssues:", boardIssues.length, "(active:", boardActive.length, "done-week:", boardDone.length, ")");
+    console.log("[jira] teamSubs:", teamSubs.length, "(active:", subActive.length, "done-week:", subDone.length, ")");
+
+    // Filter to direct team members AND country = Brasil (fallback: include tasks with no country field)
     const teamIssues = boardIssues.filter((issue) =>
       issue.fields?.assignee
-        ? isTeamMember(issue.fields.assignee.displayName) && isExplicitlyBrasil(issue)
+        ? isTeamMember(issue.fields.assignee.displayName) && isBrasil(issue)
         : false
     );
 
@@ -214,9 +239,17 @@ export async function GET() {
     const boardKeys  = new Set(boardIssues.map((i) => i.key));
     const missingKeys = [...subParentMap.keys()].filter((k) => !boardKeys.has(k));
     console.log("[jira] missingParentKeys:", missingKeys);
-    const extraParents: JiraIssue[] = missingKeys.length
-      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND statusCategory != Done AND status not in ("Backlog")`, 1)
+    // Fetch all missing parents by key (no status filter — we filter in code to support Done-this-week)
+    const extraParentsAll: JiraIssue[] = missingKeys.length
+      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")})`, 1)
       : [];
+    const extraParents = extraParentsAll.filter(i => {
+      const s = (i.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
+      const cat = ((i.fields.status as { statusCategory?: { key?: string } } | null)?.statusCategory?.key ?? "").toLowerCase();
+      if (s.includes("backlog") || s.includes("cancelad")) return false;
+      if (cat === "done") return isDueThisWeek(i.fields.duedate);
+      return true;
+    });
 
     // Build set of parent keys that are NOT in backlog (used to gate subtask visibility)
     const allParentIssues = [
@@ -227,7 +260,10 @@ export async function GET() {
       allParentIssues
         .filter(i => {
           const s = (i.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
-          return !s.includes("backlog");
+          const cat = ((i.fields.status as { statusCategory?: { key?: string } } | null)?.statusCategory?.key ?? "").toLowerCase();
+          if (s.includes("backlog") || s.includes("cancelad")) return false;
+          if (cat === "done") return isDueThisWeek(i.fields.duedate);
+          return true;
         })
         .map(i => i.key)
     );
@@ -289,12 +325,15 @@ export async function GET() {
     for (const issue of allSubParents) {
       const assigneeNames = subParentMap.get(issue.key);
       if (!assigneeNames) continue;
-      // Skip parent tasks that are in Backlog or any Done-category status
+      // Skip backlog and cancelled parents always; skip Done parents unless duedate is this week
       const rawStatus = (issue.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
       const statusCat = ((issue.fields.status as { statusCategory?: { key?: string } } | null)?.statusCategory?.key ?? "").toLowerCase();
-      if (rawStatus.includes("backlog") || statusCat === "done" ||
-          rawStatus.includes("done") || rawStatus.includes("conclu") || rawStatus.includes("entregue") ||
-          rawStatus.includes("finaliz") || rawStatus.includes("resolv") || rawStatus.includes("closed")) continue;
+      if (rawStatus.includes("backlog") || rawStatus.includes("cancelad")) continue;
+      if (statusCat === "done" || rawStatus.includes("done") || rawStatus.includes("conclu") ||
+          rawStatus.includes("entregue") || rawStatus.includes("finaliz") || rawStatus.includes("resolv") ||
+          rawStatus.includes("closed")) {
+        if (!isDueThisWeek(issue.fields.duedate)) continue;
+      }
       // Only Brasil tasks as parents (use fallback — parent may not have field set)
       if (!isBrasil(issue)) continue;
 
