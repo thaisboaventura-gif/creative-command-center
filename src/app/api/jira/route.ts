@@ -246,6 +246,46 @@ export async function GET(_req: Request) {
       console.log("[jira] tasks descartadas por país:", descartadasPais.map(i => `${i.key} ${i.fields.summary?.slice(0, 30)}`));
     }
 
+    // ── DIAGNÓSTICO DETALHADO ────────────────────────────────────────────
+    console.log("[diag] total boardIssues antes de qualquer filtro:", boardIssues.length);
+    console.log("[diag] total teamIssues após filtro time+brasil:", teamIssues.length);
+
+    const eduardoBoard = boardIssues.filter(i =>
+      i.fields.assignee?.displayName?.toLowerCase().includes("eduardo")
+    );
+    console.log("[diag] tasks Eduardo no boardIssues:", eduardoBoard.map(i =>
+      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name}`
+    ));
+
+    const gasparettoBoard = boardIssues.filter(i =>
+      i.fields.assignee?.displayName?.toLowerCase().includes("gasparetto")
+    );
+    console.log("[diag] tasks Gasparetto no boardIssues:", gasparettoBoard.map(i =>
+      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name}`
+    ));
+
+    const eduardoSubs = teamSubs.filter(i =>
+      i.fields.assignee?.displayName?.toLowerCase().includes("eduardo")
+    );
+    console.log("[diag] tasks Eduardo no teamSubs:", eduardoSubs.map(i =>
+      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name} | parent:${(i.fields.parent as {key:string}|null)?.key ?? "N/A"}`
+    ));
+
+    const gasparettoSubs = teamSubs.filter(i =>
+      i.fields.assignee?.displayName?.toLowerCase().includes("gasparetto")
+    );
+    console.log("[diag] tasks Gasparetto no teamSubs:", gasparettoSubs.map(i =>
+      `${i.key} | ${i.fields.summary?.slice(0, 40)} | ${i.fields.status?.name} | parent:${(i.fields.parent as {key:string}|null)?.key ?? "N/A"}`
+    ));
+
+    const descartadasGeral = boardIssues.filter(i =>
+      !teamIssues.find(t => t.key === i.key)
+    );
+    console.log("[diag] todos descartados (boardIssues - teamIssues):", descartadasGeral.map(i =>
+      `${i.key} | assignee:${i.fields.assignee?.displayName ?? "N/A"} | país:${JSON.stringify(i.fields.customfield_15854)}`
+    ));
+    // ── FIM DIAGNÓSTICO ──────────────────────────────────────────────────
+
     // Build map: parentKey → set of team-member display names who have a child task there.
     // Two sources:
     //   1. teamSubs (issuetype = subTaskIssueTypes — true Jira subtasks)
