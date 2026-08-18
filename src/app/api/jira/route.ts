@@ -175,10 +175,10 @@ export async function GET() {
     const teamSubs = teamSubsRaw;
     console.log("[jira] teamSubs fetched:", teamSubs.length, "subJql:", subJql);
 
-    // Filter to only the direct team members AND country = Brasil
+    // Filter to only the direct team members AND country = Brasil (explicit only — no fallback)
     const teamIssues = boardIssues.filter((issue) =>
       issue.fields?.assignee
-        ? isTeamMember(issue.fields.assignee.displayName) && isBrasil(issue)
+        ? isTeamMember(issue.fields.assignee.displayName) && isExplicitlyBrasil(issue)
         : false
     );
 
@@ -214,8 +214,25 @@ export async function GET() {
     const missingKeys = [...subParentMap.keys()].filter((k) => !boardKeys.has(k));
     console.log("[jira] missingParentKeys:", missingKeys);
     const extraParents: JiraIssue[] = missingKeys.length
-      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND statusCategory != Done AND status != Backlog`, 1)
+      ? await fetchAllIssues(base, auth, `key in (${missingKeys.join(", ")}) AND statusCategory != Done AND status not in ("Backlog")`, 1)
       : [];
+
+    // Build set of parent keys that are NOT in backlog (used to gate subtask visibility)
+    const allParentIssues = [
+      ...boardIssues.filter(i => subParentMap.has(i.key)),
+      ...extraParents,
+    ];
+    const activeParentKeys = new Set(
+      allParentIssues
+        .filter(i => {
+          const s = (i.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
+          return !s.includes("backlog");
+        })
+        .map(i => i.key)
+    );
+
+    // allSubParents now derived from the pre-filtered list above
+    const allSubParents = allParentIssues;
 
     // Build team map
     const teamMap = new Map<
@@ -268,22 +285,17 @@ export async function GET() {
       });
     }
 
-    // Parents sourced via subtask assignment — appear in the card of the member
-    // who has a subtask there, even if the parent assignee is not a team member.
-    const allSubParents = [
-      ...boardIssues.filter((i) => subParentMap.has(i.key)),
-      ...extraParents,
-    ];
-
     for (const issue of allSubParents) {
       const assigneeNames = subParentMap.get(issue.key);
       if (!assigneeNames) continue;
       // Skip parent tasks that are in Backlog or any Done-category status
       const rawStatus = (issue.fields.status as { name: string } | null)?.name?.toLowerCase() ?? "";
       const statusCat = ((issue.fields.status as { statusCategory?: { key?: string } } | null)?.statusCategory?.key ?? "").toLowerCase();
-      if (rawStatus === "backlog" || statusCat === "done" ||
+      if (rawStatus.includes("backlog") || statusCat === "done" ||
           rawStatus.includes("done") || rawStatus.includes("conclu") || rawStatus.includes("entregue") ||
           rawStatus.includes("finaliz") || rawStatus.includes("resolv") || rawStatus.includes("closed")) continue;
+      // Only Brasil tasks as parents
+      if (!isExplicitlyBrasil(issue)) continue;
 
       for (const name of assigneeNames) {
         if (!teamMap.has(name)) {
@@ -322,7 +334,8 @@ export async function GET() {
       if (!name || !parentKey) continue;
       if (!teamMap.has(name)) continue;
       if (existingTaskKeys.has(sub.key)) continue;
-      if (!isBrasil(sub)) continue;
+      if (!isExplicitlyBrasil(sub)) continue;
+      if (!activeParentKeys.has(parentKey)) continue; // skip subtasks of backlog parents
       const member = teamMap.get(name)!;
       if (!member.tasks.some((t) => t.key === parentKey)) continue; // only if parent is visible
       const est = estimateHours(sub.fields.summary, sub.fields.timeoriginalestimate);
