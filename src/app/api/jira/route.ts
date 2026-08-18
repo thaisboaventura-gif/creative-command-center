@@ -351,6 +351,7 @@ export async function GET(_req: Request) {
         teamMap.set(name, { name, avatar: initials, role: "", tasks: [] });
       }
       const est = estimateHours(issue.fields.summary, issue.fields.timeoriginalestimate);
+      const rawParentKey = (issue.fields.parent as { key: string } | null)?.key;
       teamMap.get(name)!.tasks.push({
         id: issue.key,
         key: issue.key,
@@ -362,7 +363,7 @@ export async function GET(_req: Request) {
         estimatedHours: est.hours,
         estimatedDetail: est.detail,
         createdAt: issue.fields.created?.split("T")[0] || "",
-        parentKey: (issue.fields.parent as { key: string } | null)?.key ?? undefined,
+        parentKey: rawParentKey && activeParentKeys.has(rawParentKey) ? rawParentKey : undefined,
       });
     }
 
