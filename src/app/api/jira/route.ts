@@ -188,12 +188,12 @@ export async function GET() {
     const thaisJql = `project = ${project} AND reporter = "thais.boaventura" AND assignee is EMPTY AND statusCategory != Done AND status not in ("Backlog", "Cancelado") ORDER BY created DESC`;
 
     const [boardActive, boardDone, subActive, subDone, newIssues, thaisUnassigned] = await Promise.all([
-      fetchAllIssues(base, auth, boardJqlActive, 6),
-      fetchAllIssues(base, auth, boardJqlDone, 2).catch(() => [] as JiraIssue[]),
-      fetchAllIssues(base, auth, subJqlActive, 3).catch((e) => { console.error("[jira] subJqlActive failed:", e); return [] as JiraIssue[]; }),
-      fetchAllIssues(base, auth, subJqlDone, 2).catch(() => [] as JiraIssue[]),
-      fetchAllIssues(base, auth, newJql, 2),
-      fetchAllIssues(base, auth, thaisJql, 2).catch((e) => { console.error("[jira] thaisJql failed:", e); return [] as JiraIssue[]; }),
+      fetchAllIssues(base, auth, boardJqlActive, 600),
+      fetchAllIssues(base, auth, boardJqlDone, 200).catch(() => [] as JiraIssue[]),
+      fetchAllIssues(base, auth, subJqlActive, 300).catch((e) => { console.error("[jira] subJqlActive failed:", e); return [] as JiraIssue[]; }),
+      fetchAllIssues(base, auth, subJqlDone, 200).catch(() => [] as JiraIssue[]),
+      fetchAllIssues(base, auth, newJql, 200),
+      fetchAllIssues(base, auth, thaisJql, 200).catch((e) => { console.error("[jira] thaisJql failed:", e); return [] as JiraIssue[]; }),
     ]);
 
     // Merge and deduplicate board issues and subtasks
