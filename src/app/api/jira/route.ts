@@ -18,7 +18,16 @@ interface JiraIssue {
   };
 }
 
-const TEAM_FILTER = ["joao", "beatriz", "francisco", "eduardo", "larissa", "rafaela.ceragioli", "rafaela", "ceragioli", "gasparetto", "gabriel", "cassino"];
+const TEAM_FILTER = [
+  "eduardo", "oliveira",
+  "gasparetto",
+  "gabriel", "cassino",
+  "larissa", "delarue",
+  "francisco", "fernandes",
+  "joao", "camargo",
+  "beatriz", "pusso",
+  "rafaela", "ceragioli",
+];
 
 function isTeamMember(displayName: string): boolean {
   const lower = displayName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -107,7 +116,7 @@ async function fetchAllIssues(
   base: string,
   auth: string,
   jql: string,
-  maxPages = 5
+  hardCap = 600
 ): Promise<JiraIssue[]> {
   const headers = {
     Authorization: `Basic ${auth}`,
@@ -115,19 +124,18 @@ async function fetchAllIssues(
   };
   const qf = FIELDS.map((f) => `fields=${f}`).join("&");
   const all: JiraIssue[] = [];
-  let cursor: string | null = null;
+  const pageSize = 100;
+  let startAt = 0;
 
-  for (let page = 0; page < maxPages; page++) {
-    const cursorParam: string = cursor
-      ? `&nextPageToken=${encodeURIComponent(cursor)}`
-      : "";
-    const url = `${base}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=100&${qf}${cursorParam}`;
+  while (all.length < hardCap) {
+    const url = `${base}/rest/api/3/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${pageSize}&${qf}`;
     const res = await fetch(url, { headers });
     if (!res.ok) break;
     const data = await res.json();
-    if (Array.isArray(data.issues)) all.push(...data.issues);
-    if (!data.nextPageToken || (data.issues?.length || 0) < 100) break;
-    cursor = data.nextPageToken as string;
+    const issues: JiraIssue[] = Array.isArray(data.issues) ? data.issues : [];
+    all.push(...issues);
+    if (all.length >= (data.total ?? 0) || issues.length < pageSize) break;
+    startAt += pageSize;
   }
 
   return all;
@@ -483,7 +491,7 @@ export async function GET() {
         extraParentsFetched: extraParents.length,
         thaisUnassignedFetched: thaisUnassigned.length,
         thaisUnassignedBrasil: thaisBrasil.length,
-        subJql,
+        subJqlActive,
       },
     });
   } catch (error) {
