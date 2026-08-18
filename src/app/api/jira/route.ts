@@ -295,8 +295,8 @@ export async function GET() {
       if (rawStatus.includes("backlog") || statusCat === "done" ||
           rawStatus.includes("done") || rawStatus.includes("conclu") || rawStatus.includes("entregue") ||
           rawStatus.includes("finaliz") || rawStatus.includes("resolv") || rawStatus.includes("closed")) continue;
-      // Only Brasil tasks as parents
-      if (!isExplicitlyBrasil(issue)) continue;
+      // Only Brasil tasks as parents (use fallback — parent may not have field set)
+      if (!isBrasil(issue)) continue;
 
       for (const name of assigneeNames) {
         if (!teamMap.has(name)) {
@@ -335,7 +335,7 @@ export async function GET() {
       if (!name || !parentKey) continue;
       if (!teamMap.has(name)) continue;
       if (existingTaskKeys.has(sub.key)) continue;
-      if (!isExplicitlyBrasil(sub)) continue;
+      if (!isBrasil(sub)) continue;
       if (!activeParentKeys.has(parentKey)) continue; // skip subtasks of backlog parents
       const member = teamMap.get(name)!;
       if (!member.tasks.some((t) => t.key === parentKey)) continue; // only if parent is visible
