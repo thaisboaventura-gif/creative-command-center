@@ -219,15 +219,25 @@ export async function GET() {
       subSeenKeys.has(i.key) ? false : (subSeenKeys.add(i.key), true)
     );
 
-    console.log("[jira] boardIssues:", boardIssues.length, "(active:", boardActive.length, "done-week:", boardDone.length, ")");
-    console.log("[jira] teamSubs:", teamSubs.length, "(active:", subActive.length, "done-week:", subDone.length, ")");
+    console.log("[jira] boardIssues total:", boardIssues.length, "(active:", boardActive.length, "done-week:", boardDone.length, ")");
+    console.log("[jira] boardIssues assignees:", [...new Set(boardIssues.map(i => i.fields?.assignee?.displayName).filter(Boolean))]);
+    console.log("[jira] teamSubs total:", teamSubs.length, "(active:", subActive.length, "done-week:", subDone.length, ")");
+    console.log("[jira] teamSubs assignees:", [...new Set(teamSubs.map(i => i.fields?.assignee?.displayName).filter(Boolean))]);
 
-    // Filter to direct team members AND country = Brasil (fallback: include tasks with no country field)
-    const teamIssues = boardIssues.filter((issue) =>
-      issue.fields?.assignee
-        ? isTeamMember(issue.fields.assignee.displayName) && isBrasil(issue)
-        : false
+    // Filter step 1: only direct team members
+    const teamOnlyIssues = boardIssues.filter(i =>
+      i.fields?.assignee ? isTeamMember(i.fields.assignee.displayName) : false
     );
+    console.log("[jira] após filtro time:", teamOnlyIssues.length, "— descartados:", boardIssues.length - teamOnlyIssues.length);
+
+    // Filter step 2: only Brasil (with fallback)
+    const teamIssues = teamOnlyIssues.filter(i => isBrasil(i));
+    console.log("[jira] após filtro Brasil:", teamIssues.length, "— descartados:", teamOnlyIssues.length - teamIssues.length);
+
+    const descartadasPais = teamOnlyIssues.filter(i => !isBrasil(i));
+    if (descartadasPais.length) {
+      console.log("[jira] tasks descartadas por país:", descartadasPais.map(i => `${i.key} ${i.fields.summary?.slice(0, 30)}`));
+    }
 
     // Build map: parentKey → set of team-member display names who have a child task there.
     // Two sources:
