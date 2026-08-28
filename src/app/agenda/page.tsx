@@ -591,6 +591,7 @@ export default function AgendaPage() {
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <a href="/" style={{ background: "white", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>← Command Center</a>
+          <a href="/lancamentos" style={{ background: "#ea580c", color: "white", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>🚀 Lançamentos</a>
           <Btn onClick={() => loadJira(true)} disabled={isRefreshing}>{isRefreshing ? "↻ Atualizando…" : "↻ Atualizar"}</Btn>
           <Btn onClick={() => setPage((p) => p - 1)}>← 1 sem</Btn>
           <Btn onClick={() => setPage((p) => p + 1)}>1 sem →</Btn>

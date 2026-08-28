@@ -12,7 +12,7 @@ type LoadState = "loading" | "ok" | "err";
 
 const JIRA_BASE       = "https://tiendanube.atlassian.net/browse";
 const LABEL_W_DEFAULT = 220;
-const LABEL_W_KEY     = "d2c_label_w_v1";
+const LABEL_W_KEY     = "lancamentos_label_w_v1";
 
 interface PaletteEntry {
   bg: string; text: string;
@@ -126,28 +126,12 @@ function subWorkDays(date: Date, n: number): Date {
   return r;
 }
 
-function projectColor(title: string): string {
-  const key = title.split("|")[0].split("—")[0].trim().split(" ").slice(0, 3).join(" ");
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return PROJECT_PALETTE[hash % PROJECT_PALETTE.length];
-}
-
-function darkenHex(hex: string, factor: number): string {
-  const n = parseInt(hex.replace("#", ""), 16);
-  const r = Math.max(0, Math.round(((n >> 16) & 0xff) * (1 - factor)));
-  const g = Math.max(0, Math.round(((n >>  8) & 0xff) * (1 - factor)));
-  const b = Math.max(0, Math.round(( n        & 0xff) * (1 - factor)));
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
-}
-
 function hexToRgba(hex: string, alpha: number): string {
   const n = parseInt(hex.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
 }
 
-// suppress unused warning
-void darkenHex; void projectColor;
+void PROJECT_PALETTE;
 
 interface GanttBar {
   startCol: number;
@@ -222,25 +206,24 @@ function calcBar(
   const isWaiting  = status === "in_review";
   const overdue    = !isDone && due < now;
   const isDueToday = !isDone && !isWaiting && due.getTime() === now.getTime();
-  const color      = title; // unused but keeps interface consistent
 
-  void color;
+  void title;
 
   return {
     startCol: startCol + 1, endCol: endCol + 1, execStartCol,
     overdue, isDone, isWaiting, isDueToday, startsBefore,
-    color: "#3b82f6",
+    color: "#ea580c",
     dueLabel: `${due.getDate()}/${due.getMonth() + 1}`,
   };
 }
 
 /* ─── Storage helpers ─── */
 
-const HIDDEN_KEY      = "d2c_hidden_v1";
-const COLLAPSED_KEY   = "d2c_collapsed_v1";
-const DONE_MONTHS_KEY = "d2c_done_months_v1";
-const MANUAL_KEY      = "d2c_manual_tasks_v1";
-const ORDER_KEY       = "d2c_task_order_v1";
+const HIDDEN_KEY      = "lancamentos_hidden_v1";
+const COLLAPSED_KEY   = "lancamentos_collapsed_v1";
+const DONE_MONTHS_KEY = "lancamentos_done_months_v1";
+const MANUAL_KEY      = "lancamentos_manual_tasks_v1";
+const ORDER_KEY       = "lancamentos_task_order_v1";
 
 const PT_MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
                    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -302,7 +285,7 @@ function StatusBadge({ status, isOverdue = false }: { status: string; isOverdue?
   const colors: Record<string, { bg: string; color: string }> = {
     done:        { bg: "#f3f4f6", color: "#6b7280" },
     in_review:   { bg: "#fff7ed", color: "#c2410c" },
-    in_progress: { bg: "#eff6ff", color: "#1d4ed8" },
+    in_progress: { bg: "#fff7ed", color: "#ea580c" },
     to_do:       { bg: "#f9fafb", color: "#9ca3af" },
     overdue:     { bg: "#fee2e2", color: "#991b1b" },
   };
@@ -321,7 +304,7 @@ interface TooltipState { title: string; dateLabel: string; link: string; x: numb
 
 /* ─── Main component ─── */
 
-export default function D2CDashboard() {
+export default function LancamentosDashboard() {
   const [tasks,      setTasks]      = useState<PerfTask[]>([]);
   const [src,        setSrc]        = useState<LoadState>("loading");
   const [view,       setView]       = useState<View>("week");
@@ -390,7 +373,7 @@ export default function D2CDashboard() {
 
   useEffect(() => {
     setSrc("loading");
-    fetch("/api/d2c")
+    fetch("/api/lancamentos")
       .then((r) => r.json())
       .then(async (d) => {
         if (!d.tasks) { setSrc("err"); return; }
@@ -402,7 +385,7 @@ export default function D2CDashboard() {
         if (savedKeys.length > 0) {
           const fetched = await Promise.all(
             savedKeys.map((k) =>
-              fetch(`/api/d2c?key=${k}`)
+              fetch(`/api/lancamentos?key=${k}`)
                 .then((r) => r.json())
                 .then((data) => data.task ?? null)
                 .catch(() => null)
@@ -506,6 +489,8 @@ export default function D2CDashboard() {
   function showTooltip(data: TooltipState) { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); setTooltip(data); }
   function hideTooltip() { tooltipTimer.current = setTimeout(() => setTooltip(null), 160); }
   function cancelHide() { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); }
+
+  void showTooltip;
 
   /* ── Bar drag ── */
   useEffect(() => {
@@ -622,7 +607,7 @@ export default function D2CDashboard() {
     if (tasks.some((t) => t.key === key)) { setAddError("Task já está na lista"); return; }
     setAddLoading(true); setAddError("");
     try {
-      const res  = await fetch(`/api/d2c?key=${key}`);
+      const res  = await fetch(`/api/lancamentos?key=${key}`);
       const data = await res.json();
       if (!res.ok || data.error) { setAddError(data.error || "Não encontrada"); return; }
       setTasks((prev) => [data.task, ...prev]);
@@ -718,19 +703,6 @@ export default function D2CDashboard() {
     const dispStartCol  = bar ? Math.max(1, Math.min(days.length, bar.startCol     + previewOffset)) : null;
     const dispEndCol    = bar ? Math.max(1, Math.min(days.length, bar.endCol       + previewOffset)) : null;
     const dispExecCol   = bar ? Math.max(1, Math.min(days.length, bar.execStartCol + previewOffset)) : null;
-
-    const subResolvedAtCol: number | null = !isParent ? (() => {
-      const ra = (task as PerfSubtask).resolvedAt;
-      if (!ra) return null;
-      const raDate = parseLocalDate(ra); raDate.setHours(0, 0, 0, 0);
-      for (let j = 0; j < days.length; j++) {
-        const dj = new Date(days[j]); dj.setHours(0, 0, 0, 0);
-        if (dj.getTime() === raDate.getTime()) return j + 1;
-      }
-      return null;
-    })() : null;
-
-    void subResolvedAtCol;
 
     const allSubsDone = isParent && subtasks.length > 0 && subtasks.every((st) => st.status === "done");
 
@@ -829,7 +801,7 @@ export default function D2CDashboard() {
           const isWaitingDueCell = isDueCell && !isParent && !!bar?.isWaiting;
           const subDueBg = !isParent && isDueCell && bar?.overdue && !bar.isDone && !bar.isWaiting ? "#FEE2E2" : undefined;
           const isWeekEnd   = i < days.length - 1 && days[i + 1].getDay() === 1;
-          const borderRight = isToday ? "1px solid #c4b5fd" : isDueCell ? `1px solid ${styles.leftBorder}` : isWeekEnd ? "2px solid #9ca3af" : "1px dashed #d1d5db";
+          const borderRight = isToday ? "1px solid #fed7aa" : isDueCell ? `1px solid ${styles.leftBorder}` : isWeekEnd ? "2px solid #9ca3af" : "1px dashed #d1d5db";
 
           const execBarRadius = !bar ? "0"
             : isStart && !bar.startsBefore && isEnd ? "8px"
@@ -844,7 +816,7 @@ export default function D2CDashboard() {
               borderLeft: (isParent ? (isStart && !bar?.startsBefore) : isExecStart)
                 ? `${isParent ? 4 : 3}px solid ${styles.leftBorder}` : undefined,
               minHeight: isParent ? 32 : 28,
-              background: subDueBg ?? (!inRange && isToday ? "#f5f3ff" : "transparent"),
+              background: subDueBg ?? (!inRange && isToday ? "#fff7ed" : "transparent"),
               overflow: "visible",
             }}>
               {isPipeline && (
@@ -931,8 +903,8 @@ export default function D2CDashboard() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h1 style={{ fontSize: 17, fontWeight: 700, color: "#111", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 6, background: "#dbeafe", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🛍️</span>
-          D2C Dashboard
+          <span style={{ width: 26, height: 26, borderRadius: 6, background: "#ffedd5", color: "#ea580c", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🚀</span>
+          Lançamentos
           <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{periodLabel}</span>
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -947,10 +919,7 @@ export default function D2CDashboard() {
           <button onClick={() => setOffset((o) => o - 1)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>←</button>
           <button onClick={() => setOffset(0)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>Hoje</button>
           <button onClick={() => setOffset((o) => o + 1)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>→</button>
-          <a href="/lancamentos" style={{ background: "#ea580c", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
-            🚀 Lançamentos
-          </a>
-          <a href="/nova-demanda" style={{ background: "#1d4ed8", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
+          <a href="/nova-demanda" style={{ background: "#ea580c", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
             + Nova demanda
           </a>
         </div>
@@ -994,16 +963,16 @@ export default function D2CDashboard() {
                   title="Arrastar para redimensionar coluna"
                   style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center" }}
                 >
-                  <div style={{ width: 3, height: 18, background: isResizingLabel ? "#1d4ed8" : "#e5e7eb", borderRadius: 2, transition: "background 0.1s" }} />
+                  <div style={{ width: 3, height: 18, background: isResizingLabel ? "#ea580c" : "#e5e7eb", borderRadius: 2, transition: "background 0.1s" }} />
                 </div>
               </div>
               {days.map((d, i) => {
                 const isT = sameDay(d, today);
                 const isWeekEnd = i < days.length - 1 && days[i + 1].getDay() === 1;
                 return (
-                  <div key={i} style={{ padding: "8px 4px", textAlign: "center", borderRight: isT ? "1px solid #c4b5fd" : isWeekEnd ? "2px solid #9ca3af" : "1px dashed #d1d5db", background: isT ? "#f5f3ff" : "transparent" }}>
-                    <div style={{ fontSize: 10, color: isT ? "#1d4ed8" : "#9ca3af", fontWeight: isT ? 700 : 500 }}>{dayLabel(d)}</div>
-                    <div style={{ fontSize: 11, color: isT ? "#1d4ed8" : "#374151", fontWeight: isT ? 700 : 400 }}>{shortDate(d)}</div>
+                  <div key={i} style={{ padding: "8px 4px", textAlign: "center", borderRight: isT ? "1px solid #fed7aa" : isWeekEnd ? "2px solid #9ca3af" : "1px dashed #d1d5db", background: isT ? "#fff7ed" : "transparent" }}>
+                    <div style={{ fontSize: 10, color: isT ? "#ea580c" : "#9ca3af", fontWeight: isT ? 700 : 500 }}>{dayLabel(d)}</div>
+                    <div style={{ fontSize: 11, color: isT ? "#ea580c" : "#374151", fontWeight: isT ? 700 : 400 }}>{shortDate(d)}</div>
                   </div>
                 );
               })}
@@ -1020,7 +989,7 @@ export default function D2CDashboard() {
           <div style={{ width: "100%" }}>
             {orderedVisibleActive.length === 0 && (
               <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-                Nenhuma task D2C ativa encontrada.
+                Nenhuma task de Lançamentos ativa encontrada.
               </div>
             )}
             {(orderedRef.current = orderedVisibleActive.map((t) => t.key), null)}
@@ -1028,7 +997,7 @@ export default function D2CDashboard() {
               <div
                 key={task.key}
                 ref={(el) => { if (el) rowRefsMap.current.set(task.key, el); else rowRefsMap.current.delete(task.key); }}
-                style={{ borderTop: dropIdx === idx && vertDrag ? "2px solid #1d4ed8" : "2px solid transparent" }}
+                style={{ borderTop: dropIdx === idx && vertDrag ? "2px solid #ea580c" : "2px solid transparent" }}
               >
                 <TaskRow
                   task={task}
@@ -1042,7 +1011,7 @@ export default function D2CDashboard() {
               </div>
             ))}
             {dropIdx === orderedVisibleActive.length && vertDrag && (
-              <div style={{ height: 2, background: "#1d4ed8", margin: 0 }} />
+              <div style={{ height: 2, background: "#ea580c", margin: 0 }} />
             )}
           </div>
         </div>
@@ -1055,7 +1024,7 @@ export default function D2CDashboard() {
           { color: "#fbbf24", label: "Entrega hoje 📅" },
           { color: "#fbcfe8", label: "Entr. p/ feedb. ⏳" },
           { color: "#9ca3af", label: "Entregue ✅" },
-          { color: "#5b6cff", label: "Em andamento" },
+          { color: "#fdba74", label: "Em andamento" },
         ].map(({ color, label, textColor }) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <div style={{ width: 12, height: 12, borderRadius: 3, background: color, flexShrink: 0 }} />
@@ -1067,7 +1036,7 @@ export default function D2CDashboard() {
       {/* Entregas concluídas */}
       <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3", marginBottom: 16, overflow: "hidden" }}>
         <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#374151" }}>📦 Entregas D2C concluídas</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#374151" }}>🚀 Lançamentos concluídos</span>
           <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>
             {doneTasks.length} {doneTasks.length === 1 ? "task" : "tasks"}
           </span>
@@ -1080,7 +1049,7 @@ export default function D2CDashboard() {
         </div>
         {monthGroups.length === 0 && (
           <div style={{ padding: "24px 16px", textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-            {deliveredSearch ? "Nenhum resultado para essa busca." : "Nenhuma task D2C concluída ainda."}
+            {deliveredSearch ? "Nenhum resultado para essa busca." : "Nenhum Lançamento concluído ainda."}
           </div>
         )}
         {monthGroups.map((group) => {
