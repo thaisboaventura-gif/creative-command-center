@@ -140,11 +140,11 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // Active parent tasks with label "Lançamentos"
-    const jql1 = `project = ${project} AND labels = "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    // Active parent tasks with "Lançamentos" in title
+    const jql1 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
 
-    // Done parent tasks with label "Lançamentos" this year
-    const jql2 = `project = ${project} AND labels = "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // Done parent tasks with "Lançamentos" in title this year
+    const jql2 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),
