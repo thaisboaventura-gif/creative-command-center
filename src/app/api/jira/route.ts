@@ -14,8 +14,15 @@ interface JiraIssue {
     duedate: string | null;
     labels: string[];
     timeoriginalestimate: number | null;
+    customfield_10021?: Array<{ value?: string }> | null;
     [key: string]: unknown;
   };
+}
+
+function isFlagged(issue: JiraIssue): boolean {
+  const val = issue.fields.customfield_10021;
+  if (!Array.isArray(val) || val.length === 0) return false;
+  return val.some((v) => v?.value?.toLowerCase() === "impediment");
 }
 
 const TEAM_FILTER = [
@@ -79,6 +86,7 @@ const FIELDS = [
   "labels",
   "timeoriginalestimate",
   "parent",   // needed to identify parent key when fetching subtasks
+  "customfield_10021", // Jira "Flagged" field
   ...COUNTRY_FIELDS,
 ];
 
@@ -334,6 +342,7 @@ export async function GET(_req: Request) {
         estimatedDetail: string;
         createdAt: string;
         parentKey?: string;
+        flagged?: boolean;
         }>;
       }
     >();
@@ -364,6 +373,7 @@ export async function GET(_req: Request) {
         estimatedDetail: est.detail,
         createdAt: issue.fields.created?.split("T")[0] || "",
         parentKey: rawParentKey && activeParentKeys.has(rawParentKey) ? rawParentKey : undefined,
+        flagged: isFlagged(issue),
       });
     }
 
@@ -403,6 +413,7 @@ export async function GET(_req: Request) {
           estimatedHours: est.hours,
           estimatedDetail: est.detail,
           createdAt: issue.fields.created?.split("T")[0] || "",
+          flagged: isFlagged(issue),
           // allSubParents tasks are always root-level — no parentKey here
         });
       }
@@ -432,6 +443,7 @@ export async function GET(_req: Request) {
         estimatedHours: est.hours, estimatedDetail: est.detail,
         createdAt: sub.fields.created?.split("T")[0] || "",
         parentKey: parentVisible ? parentKey : undefined,
+        flagged: isFlagged(sub),
       });
     }
 
@@ -457,6 +469,7 @@ export async function GET(_req: Request) {
         estimatedHours: est.hours,
         estimatedDetail: est.detail,
         createdAt: issue.fields.created?.split("T")[0] || "",
+        flagged: isFlagged(issue),
       });
     }
 

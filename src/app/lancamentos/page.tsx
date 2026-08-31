@@ -485,6 +485,29 @@ export default function LancamentosDashboard() {
     setDoneMonthsCollapsed(next); saveSet(DONE_MONTHS_KEY, next);
   }
 
+  async function toggleFlag(taskKey: string, currentFlagged: boolean) {
+    const newFlagged = !currentFlagged;
+    setTasks(prev => prev.map(t => ({
+      ...t,
+      flagged: t.key === taskKey ? newFlagged : t.flagged,
+      subtasks: t.subtasks.map(st => st.key === taskKey ? { ...st, flagged: newFlagged } : st),
+    })));
+    try {
+      const res = await fetch("/api/jira/flag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey: taskKey, flagged: newFlagged }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      setTasks(prev => prev.map(t => ({
+        ...t,
+        flagged: t.key === taskKey ? currentFlagged : t.flagged,
+        subtasks: t.subtasks.map(st => st.key === taskKey ? { ...st, flagged: currentFlagged } : st),
+      })));
+    }
+  }
+
   /* ── Tooltip ── */
   function showTooltip(data: TooltipState) { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); setTooltip(data); }
   function hideTooltip() { tooltipTimer.current = setTimeout(() => setTooltip(null), 160); }
@@ -766,6 +789,11 @@ export default function LancamentosDashboard() {
           <span title={task.title} style={{ fontSize: indent ? 11 : 12, color: "#374151", fontWeight: isParent ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {task.title}
           </span>
+          <button
+            onClick={e => { e.stopPropagation(); toggleFlag(taskKey, !!((task as PerfTask).flagged || (task as PerfSubtask).flagged)); }}
+            title={(task as PerfTask).flagged || (task as PerfSubtask).flagged ? "Remover marcação" : "Marcar task"}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: isParent ? 12 : 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: ((task as PerfTask).flagged || (task as PerfSubtask).flagged) ? 1 : 0.2, transition: "opacity 0.15s" }}
+          >🚩</button>
           <StatusBadge status={task.status} isOverdue={isGloballyOverdue} />
           {isParent && (
             <button
