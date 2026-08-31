@@ -142,11 +142,11 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // Active parent tasks with D2C in the title, excluding D2C evento tasks
-    const jql1 = `project = ${project} AND summary ~ "D2C" AND NOT summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    // Active parent tasks with "D2C evento" in the title
+    const jql1 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
 
-    // Done parent tasks with D2C this year, excluding D2C evento tasks
-    const jql2 = `project = ${project} AND summary ~ "D2C" AND NOT summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // Done parent tasks with "D2C evento" this year
+    const jql2 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),
@@ -185,7 +185,7 @@ export async function GET(req: Request) {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[d2c]", msg);
+    console.error("[d2c-evento]", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

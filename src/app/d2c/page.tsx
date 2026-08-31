@@ -975,6 +975,9 @@ export default function D2CDashboard() {
           <button onClick={() => setOffset((o) => o - 1)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>←</button>
           <button onClick={() => setOffset(0)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>Hoje</button>
           <button onClick={() => setOffset((o) => o + 1)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "white", cursor: "pointer", fontSize: 12, color: "#374151" }}>→</button>
+          <a href="/d2c-evento" style={{ background: "#9333ea", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
+            🎪 D2C Evento
+          </a>
           <a href="/lancamentos" style={{ background: "#ea580c", color: "white", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-block" }}>
             🚀 Lançamentos
           </a>
