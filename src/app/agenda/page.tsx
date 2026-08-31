@@ -16,6 +16,7 @@ interface TaskItem {
   estimatedDetail: string;
   createdAt: string;
   parentKey?: string;
+  flagged?: boolean;
 }
 
 interface MemberItem {
@@ -504,6 +505,27 @@ export default function AgendaPage() {
     });
   }
 
+  async function toggleFlag(taskKey: string, currentFlagged: boolean) {
+    const newFlagged = !currentFlagged;
+    setTeam(prev => prev.map(member => ({
+      ...member,
+      tasks: member.tasks.map(t => t.key === taskKey ? { ...t, flagged: newFlagged } : t),
+    })));
+    try {
+      const res = await fetch("/api/jira/flag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey: taskKey, flagged: newFlagged }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      setTeam(prev => prev.map(member => ({
+        ...member,
+        tasks: member.tasks.map(t => t.key === taskKey ? { ...t, flagged: currentFlagged } : t),
+      })));
+    }
+  }
+
   function sortTeam(t: MemberItem[]) {
     return [...t].sort((a, b) => {
       const ka = firstName(a.name).toLowerCase();
@@ -735,6 +757,11 @@ export default function AgendaPage() {
                           <a href={`${JIRA}/${parent.key}`} target="_blank" rel="noopener noreferrer"
                             style={{ fontSize: 11, fontWeight: 700, color: ct.subtleText, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
                             title={parent.title}>{parent.title}</a>
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleFlag(parent.key, !!parent.flagged); }}
+                            title={parent.flagged ? "Remover marcação" : "Marcar task"}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: parent.flagged ? 1 : 0.25, transition: "opacity 0.15s" }}
+                          >🚩</button>
                           {(() => {
                             const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
                             const parentOverdue = parentDue !== null && parentDue < todayMidnight && parent.status !== "done" && parent.status !== "in_review";
@@ -804,6 +831,11 @@ export default function AgendaPage() {
                               <a href={`${JIRA}/${sub.key}`} target="_blank" rel="noopener noreferrer"
                                 style={{ fontSize: 10, fontWeight: 400, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
                                 title={sub.title}>{sub.title}</a>
+                              <button
+                                onClick={e => { e.stopPropagation(); toggleFlag(sub.key, !!sub.flagged); }}
+                                title={sub.flagged ? "Remover marcação" : "Marcar task"}
+                                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: sub.flagged ? 1 : 0.2, transition: "opacity 0.15s" }}
+                              >🚩</button>
                               {(() => {
                                 const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
                                 const subOverdue2 = subDue2 !== null && subDue2 < todayMidnight && sub.status !== "done" && sub.status !== "in_review";

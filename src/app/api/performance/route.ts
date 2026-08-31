@@ -14,6 +14,7 @@ const FIELDS = [
   "duedate", "created", "subtasks", "issuetype", "timeoriginalestimate",
   "resolutiondate", "parent",
   COUNTRY_FIELD,
+  "customfield_10021", // Jira "Flagged" field
 ];
 
 export interface PerfSubtask {
@@ -25,6 +26,7 @@ export interface PerfSubtask {
   resolvedAt: string | null;
   createdAt: string;
   estimatedHours: number;
+  flagged: boolean;
 }
 
 export interface PerfTask {
@@ -39,6 +41,7 @@ export interface PerfTask {
   estimatedHours: number;
   jiraLink: string;
   subtasks: PerfSubtask[];
+  flagged: boolean;
 }
 
 function getAuth() {
@@ -99,6 +102,12 @@ async function fetchSingleIssue(base: string, auth: string, key: string): Promis
   return res.json();
 }
 
+function isFlagged(fields: Record<string, unknown>): boolean {
+  const val = fields["customfield_10021"];
+  if (!Array.isArray(val) || val.length === 0) return false;
+  return (val as Array<{ value?: string }>).some((v) => v?.value?.toLowerCase() === "impediment");
+}
+
 function toSubtask(issue: RawIssue, base: string): PerfSubtask {
   const f = issue.fields;
   const est = estimateHours(f.summary as string, f.timeoriginalestimate as number | null);
@@ -111,6 +120,7 @@ function toSubtask(issue: RawIssue, base: string): PerfSubtask {
     resolvedAt:     ((f.resolutiondate as string) ?? null)?.split("T")[0] ?? null,
     createdAt:      ((f.created as string) ?? "").split("T")[0],
     estimatedHours: est.hours,
+    flagged:        isFlagged(f),
   };
 }
 
@@ -129,6 +139,7 @@ function toTask(issue: RawIssue, base: string, subtasks: PerfSubtask[]): PerfTas
     estimatedHours: est.hours,
     jiraLink:       `${base}/browse/${issue.key}`,
     subtasks,
+    flagged:        isFlagged(f),
   };
 }
 

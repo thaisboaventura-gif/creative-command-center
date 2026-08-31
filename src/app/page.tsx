@@ -14,6 +14,7 @@ interface TaskItem {
   estimatedDetail: string;
   createdAt: string;
   parentKey?: string;
+  flagged?: boolean;
 }
 
 interface IncomingItem {
@@ -25,6 +26,7 @@ interface IncomingItem {
   dueDate: string | null;
   estimatedHours: number;
   createdAt: string;
+  flagged?: boolean;
 }
 
 interface MemberItem {
@@ -548,6 +550,29 @@ export default function Dashboard() {
     });
   }
 
+  async function toggleFlag(taskKey: string, currentFlagged: boolean) {
+    const newFlagged = !currentFlagged;
+    // Optimistic update
+    setTeam(prev => prev.map(member => ({
+      ...member,
+      tasks: member.tasks.map(t => t.key === taskKey ? { ...t, flagged: newFlagged } : t),
+    })));
+    try {
+      const res = await fetch("/api/jira/flag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey: taskKey, flagged: newFlagged }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      // Revert on failure
+      setTeam(prev => prev.map(member => ({
+        ...member,
+        tasks: member.tasks.map(t => t.key === taskKey ? { ...t, flagged: currentFlagged } : t),
+      })));
+    }
+  }
+
   async function confirmDeadline() {
     if (!pendingModal) return;
     const { key, newDate, prevDate } = pendingModal;
@@ -1021,6 +1046,13 @@ export default function Dashboard() {
                   title={parent.title}>
                   {parent.title}
                 </a>
+                <button
+                  onClick={e => { e.stopPropagation(); toggleFlag(parent.key, !!parent.flagged); }}
+                  title={parent.flagged ? "Remover marcação" : "Marcar task"}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: parent.flagged ? 1 : 0.25, transition: "opacity 0.15s" }}
+                >
+                  🚩
+                </button>
                 {(() => {
                   const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
                   const parentOverdue = parentDue !== null && parentDue < todayMidnight && parent.status !== "done" && parent.status !== "in_review";
@@ -1171,6 +1203,13 @@ export default function Dashboard() {
                       title={sub.title}>
                       {sub.title}
                     </a>
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleFlag(sub.key, !!sub.flagged); }}
+                      title={sub.flagged ? "Remover marcação" : "Marcar task"}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: sub.flagged ? 1 : 0.2, transition: "opacity 0.15s" }}
+                    >
+                      🚩
+                    </button>
                     {(() => {
                       const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
                       const subOverdue2 = subDue2 !== null && subDue2 < todayMidnight && sub.status !== "done" && sub.status !== "in_review";
