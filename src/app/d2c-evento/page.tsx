@@ -817,6 +817,12 @@ export default function D2CEventoDashboard() {
           <span title={task.title} style={{ fontSize: indent ? 11 : 12, color: "#374151", fontWeight: isParent ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {task.title}
           </span>
+          <span
+            title={(task as PerfTask).assignee || "Sem responsável"}
+            style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 72 }}
+          >
+            {((task as PerfTask).assignee || "").split(" ")[0] || "—"}
+          </span>
           <button
             onClick={e => { e.stopPropagation(); toggleFlag(taskKey, !!((task as PerfTask).flagged || (task as PerfSubtask).flagged)); }}
             title={(task as PerfTask).flagged || (task as PerfSubtask).flagged ? "Remover marcação" : "Marcar task"}
