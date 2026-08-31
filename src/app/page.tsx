@@ -1049,9 +1049,9 @@ export default function Dashboard() {
                 <button
                   onClick={e => { e.stopPropagation(); toggleFlag(parent.key, !!parent.flagged); }}
                   title={parent.flagged ? "Remover marcação" : "Marcar task"}
-                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: parent.flagged ? 1 : 0.25, transition: "opacity 0.15s" }}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "0 2px", flexShrink: 0, lineHeight: 1, color: parent.flagged ? "#e53935" : "#ccc", transition: "color 0.15s" }}
                 >
-                  🚩
+                  ⚑
                 </button>
                 {(() => {
                   const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
@@ -1206,9 +1206,9 @@ export default function Dashboard() {
                     <button
                       onClick={e => { e.stopPropagation(); toggleFlag(sub.key, !!sub.flagged); }}
                       title={sub.flagged ? "Remover marcação" : "Marcar task"}
-                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: sub.flagged ? 1 : 0.2, transition: "opacity 0.15s" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, color: sub.flagged ? "#e53935" : "#ccc", transition: "color 0.15s" }}
                     >
-                      🚩
+                      ⚑
                     </button>
                     {(() => {
                       const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;

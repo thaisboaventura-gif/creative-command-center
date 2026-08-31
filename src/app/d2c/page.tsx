@@ -820,8 +820,8 @@ export default function D2CDashboard() {
           <button
             onClick={e => { e.stopPropagation(); toggleFlag(taskKey, !!((task as PerfTask).flagged || (task as PerfSubtask).flagged)); }}
             title={(task as PerfTask).flagged || (task as PerfSubtask).flagged ? "Remover marcação" : "Marcar task"}
-            style={{ background: "none", border: "none", cursor: "pointer", fontSize: isParent ? 12 : 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, opacity: ((task as PerfTask).flagged || (task as PerfSubtask).flagged) ? 1 : 0.2, transition: "opacity 0.15s" }}
-          >🚩</button>
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: isParent ? 12 : 11, padding: "0 2px", flexShrink: 0, lineHeight: 1, color: ((task as PerfTask).flagged || (task as PerfSubtask).flagged) ? "#e53935" : "#ccc", transition: "color 0.15s" }}
+          >⚑</button>
           <StatusBadge status={task.status} isOverdue={isGloballyOverdue} />
           {isParent && (
             <button
