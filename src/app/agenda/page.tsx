@@ -906,9 +906,9 @@ export default function AgendaPage() {
                             draggable
                             onDragStart={e => { e.stopPropagation(); setCalDragKey(slot.task.id); }}
                             onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }}
-                            onClick={() => setEditingBlock({ taskId: slot.task.id, hours: hoursOverrides[slot.task.id] ?? slot.task.estimatedHours })}
+                            onClick={() => window.open(`${JIRA}/${slot.task.key}`, "_blank")}
                             title={slot.task.title}
-                            style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "grab", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
+                            style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "pointer", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
                             <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
                               {slot.task.title}
@@ -970,7 +970,7 @@ export default function AgendaPage() {
                             const color2  = projectColor(extractProject(slot2.task.title));
                             return (
                               <div key={j}
-                                onClick={() => setEditingBlock({ taskId: slot2.task.id, hours: hoursOverrides[slot2.task.id] ?? slot2.task.estimatedHours })}
+                                onClick={() => window.open(`${JIRA}/${slot2.task.key}`, "_blank")}
                                 title={slot2.task.title}
                                 style={{ height: blockH2, marginBottom: 3, borderRadius: 5, background: hexToRgba(color2, 0.12), borderLeft: `3px solid ${color2}`, padding: "3px 6px", overflow: "hidden", cursor: "pointer", userSelect: "none", boxSizing: "border-box" }}>
                                 <div style={{ fontSize: 9, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{slot2.task.title}</div>
@@ -1020,7 +1020,7 @@ export default function AgendaPage() {
                 const curUser = assignableUsers.find(u => u.displayName === task.assignee);
                 const pillLabel = curUser ? curUser.firstName : (task.assignee ? task.assignee.split(/[\s.]/)[0] : "—");
                 return (
-                  <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}` }}>
+                  <div key={task.id} onClick={() => window.open(`${JIRA}/${task.key}`, "_blank")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}`, cursor: "pointer" }}>
                     <span style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
                     <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
                     <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
@@ -1040,7 +1040,8 @@ export default function AgendaPage() {
                     </div>
                     {due && <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
                     <button
-                      onClick={() => {
+                      onClick={e => {
+                        e.stopPropagation();
                         setDayExclusions(prev => {
                           const next = { ...prev };
                           delete next[task.id];
@@ -1186,17 +1187,18 @@ export default function AgendaPage() {
 
                       {/* Parent row */}
                       <div style={{ display: "grid", gridTemplateColumns: GRID_COLS, borderBottom: "1px solid #e9ecef", minHeight: 32, background: hexToRgba(ct.bg, 0.15), opacity: isVertDraggingThis ? 0.35 : 1 }}>
-                        <div style={{ padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                        <div onClick={() => window.open(`${JIRA}/${parent.key}`, "_blank")} style={{ padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`, display: "flex", alignItems: "center", gap: 4, minWidth: 0, cursor: "pointer" }}>
                           <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setVertDrag({ memberName: member.name, taskId: parent.id, fromIdx: pIdx }); vertDropIdxRef.current = { memberName: member.name, idx: pIdx }; setVertDropIdx({ memberName: member.name, idx: pIdx }); }}
                             title="Arrastar para reordenar" style={{ cursor: "ns-resize", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, height: 14, padding: "0 2px" }}>
                             {[0, 1, 2].map(i => <div key={i} style={{ width: 8, height: 1.5, background: ct.subtleText + "80", borderRadius: 1 }} />)}
                           </div>
                           {children.length > 0 && (
-                            <button onClick={() => toggleCollapsed(parent.key)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 8, padding: "1px 2px", flexShrink: 0, lineHeight: 1 }}>
+                            <button onClick={e => { e.stopPropagation(); toggleCollapsed(parent.key); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 8, padding: "1px 2px", flexShrink: 0, lineHeight: 1 }}>
                               {isCollapsed ? "▶" : "▼"}
                             </button>
                           )}
                           <a href={`${JIRA}/${parent.key}`} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
                             style={{ fontSize: 11, fontWeight: 700, color: ct.subtleText, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
                             title={parent.title}>{parent.title}</a>
                           <button
@@ -1287,9 +1289,10 @@ export default function AgendaPage() {
 
                         return (
                           <div key={sub.key} style={{ display: "grid", gridTemplateColumns: GRID_COLS, borderBottom: "1px solid #f0f0f0", minHeight: 28, background: hexToRgba(ct.bg, 0.06) }}>
-                            <div style={{ padding: "0 6px 0 20px", display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                            <div onClick={() => window.open(`${JIRA}/${sub.key}`, "_blank")} style={{ padding: "0 6px 0 20px", display: "flex", alignItems: "center", gap: 4, minWidth: 0, cursor: "pointer" }}>
                               <span style={{ color: "#d1d5db", fontSize: 10, flexShrink: 0 }}>↳</span>
                               <a href={`${JIRA}/${sub.key}`} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
                                 style={{ fontSize: 10, fontWeight: 400, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
                                 title={sub.title}>{sub.title}</a>
                               <button
