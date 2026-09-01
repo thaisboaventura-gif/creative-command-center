@@ -370,8 +370,10 @@ export default function AgendaPage() {
 
   // ── Add-to-pipeline ──
   interface FetchedTask { id: string; key: string; title: string; status: string; assignee: string; dueDate: string | null; estimatedHours: number; estimatedDetail: string; estimatedFromJira: boolean }
-  type AddFlow = null | "input" | "loading" | "confirm" | "error";
+  // "force-confirm": task exists but is hidden (flagged/in_review) — offer override
+  type AddFlow = null | "input" | "loading" | "confirm" | "error" | "force-confirm";
   const [manualTasks, setManualTasks] = useState<TaskItem[]>(() => { try { return JSON.parse(localStorage.getItem("agenda_manual_tasks_v1") ?? "[]"); } catch { return []; } });
+  const [forcedTasks, setForcedTasks] = useState<Set<string>>(new Set());
   const [addFlow, setAddFlow]     = useState<AddFlow>(null);
   const [addInput, setAddInput]   = useState("");
   const [addFetched, setAddFetched] = useState<FetchedTask | null>(null);
@@ -504,6 +506,10 @@ export default function AgendaPage() {
     if (Object.keys(pins).length > 0)  setDayPins(pins);
     if (Object.keys(excls).length > 0) setDayExclusions(excls);
 
+    try {
+      const rawF2 = localStorage.getItem("agenda_forced_v1");
+      if (rawF2) setForcedTasks(new Set(JSON.parse(rawF2)));
+    } catch {}
     try {
       const rawH = localStorage.getItem("agenda_holidays_v1");
       if (rawH) setHolidays(new Set(JSON.parse(rawH)));
@@ -701,6 +707,19 @@ export default function AgendaPage() {
     }
   }
 
+  function forceTaskVisible(taskId: string) {
+    setForcedTasks(prev => {
+      const next = new Set(prev);
+      next.add(taskId);
+      try { localStorage.setItem("agenda_forced_v1", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+    setAddFlow(null);
+    setAddInput("");
+    setAddFetched(null);
+    setAddError(null);
+  }
+
   function addTaskToList(fetched: FetchedTask, hours: number) {
     const task: TaskItem = {
       id: "manual_" + fetched.key,
@@ -729,11 +748,27 @@ export default function AgendaPage() {
   async function fetchAndAddTask(rawKey: string) {
     const key = rawKey.trim().toUpperCase();
     if (!key) return;
-    const alreadyInMember = member?.tasks.some(t => t.key === key);
-    const alreadyManual   = manualTasks.some(t => t.key === key);
-    if (alreadyInMember || alreadyManual) {
-      setAddError("Esta task já está no pipeline.");
-      setAddFlow("error");
+    const existingInMember = member?.tasks.find(t => t.key === key);
+    const existingManual   = manualTasks.find(t => t.key === key);
+    const existing = existingInMember || existingManual;
+    if (existing) {
+      const norm = normalizeStatus(existing.status);
+      const isHidden = existing.flagged || norm === "in_review";
+      if (!isHidden || forcedTasks.has(existing.id)) {
+        // Visible already (or already forced) — hard block
+        setAddError("Esta task já está no pipeline.");
+        setAddFlow("error");
+        return;
+      }
+      // Hidden (flagged or awaiting feedback) — offer force
+      setAddFetched({
+        id: existing.id, key: existing.key, title: existing.title,
+        status: existing.status, assignee: existing.assignee,
+        dueDate: existing.dueDate, estimatedHours: existing.estimatedHours,
+        estimatedDetail: existing.estimatedDetail, estimatedFromJira: false,
+      });
+      setAddError(existing.flagged ? "flagged" : "in_review");
+      setAddFlow("force-confirm");
       return;
     }
     setAddFlow("loading");
@@ -877,8 +912,10 @@ export default function AgendaPage() {
   const calDays  = ganttTwoWeeks ? days : weekDays; // drives CalendarView + buildSchedule
   const memberAbsences = member ? (absences[member.name] ?? new Set<string>()) : new Set<string>();
   const blockedDays    = new Set<string>([...holidays, ...memberAbsences]);
+  // Tasks overridden by forceTaskVisible: treat as unflagged so they enter the schedule
+  const scheduleTasks = memberTasks.map(t => forcedTasks.has(t.id) ? { ...t, flagged: false } : t);
   const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(memberTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
+    ? buildSchedule(scheduleTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
@@ -1043,6 +1080,34 @@ export default function AgendaPage() {
                 </button>
               </div>
             </div>
+            {/* Force-confirm: task exists but is hidden */}
+            {addFlow === "force-confirm" && addFetched && (
+              <div style={{ marginBottom: 12, padding: "12px 14px", background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#c2410c" }}>
+                  {addError === "flagged" ? "⚑ Task com bandeira" : "⏳ Task aguardando feedback"}
+                </div>
+                <div style={{ fontSize: 11, color: "#374151" }}><b>{addFetched.key}</b> — {addFetched.title}</div>
+                <div style={{ fontSize: 10, color: "#92400e" }}>
+                  {addError === "flagged"
+                    ? "Esta task já existe no pipeline mas está marcada com bandeira ⚑, por isso está oculta da Agenda diária."
+                    : "Esta task já existe no pipeline mas está com status 'Aguardando feedback', por isso não entra no cálculo da agenda."}
+                </div>
+                <div style={{ fontSize: 10, color: "#6b7280" }}>Quer forçar a exibição dela na agenda, ignorando essa exclusão até você desmarcar manualmente?</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                  <button
+                    onClick={() => forceTaskVisible(addFetched.id)}
+                    style={{ fontSize: 11, fontWeight: 600, padding: "5px 14px", borderRadius: 8, border: "none", background: "#ea580c", color: "white", cursor: "pointer" }}>
+                    Forçar exibição
+                  </button>
+                  <button
+                    onClick={() => { setAddFlow(null); setAddFetched(null); setAddInput(""); setAddError(null); }}
+                    style={{ fontSize: 11, padding: "5px 10px", borderRadius: 8, border: "1px solid #fed7aa", background: "white", color: "#c2410c", cursor: "pointer" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Confirm / missing-fields mini-modal */}
             {addFlow === "confirm" && addFetched && (
               <div style={{ marginBottom: 12, padding: "12px 14px", background: "#f5f3ff", border: "1.5px solid #c4b5fd", borderRadius: 10, display: "flex", flexDirection: "column", gap: 8 }}>
