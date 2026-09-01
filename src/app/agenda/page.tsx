@@ -230,6 +230,7 @@ function buildSchedule(
   hoursOverrides: Record<string, number> = {},
   dayPins: Record<string, string> = {},
   dayExclusions: Record<string, string[]> = {},
+  blockedDays: Set<string> = new Set(),
 ): ScheduleResult {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
@@ -278,6 +279,10 @@ function buildSchedule(
     for (let di = 0; di < days.length && rem > 0.01; di++) {
       const dk = formatLocalDate(days[di]);
       const isForced = forceIdx !== null && di === forceIdx;
+      if (blockedDays.has(dk)) {
+        if (isForced) forceIdx = di + 1; // propagate force past blocked day
+        continue;
+      }
       if (!isForced && !eligibleSet.has(dk)) continue;
       if (isForced) forceIdx = null;
 
@@ -357,6 +362,12 @@ export default function AgendaPage() {
   const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
   const [ganttTwoWeeks, setGanttTwoWeeks] = useState(false);
 
+  // ── Day blocking (holidays + absences) ──
+  const [holidays,  setHolidays]  = useState<Set<string>>(new Set());
+  const [absences,  setAbsences]  = useState<Record<string, Set<string>>>({});
+  interface DayBlockMenu { dk: string; rect: DOMRect }
+  const [dayBlockMenu, setDayBlockMenu] = useState<DayBlockMenu | null>(null);
+
   // ── Add-to-pipeline ──
   interface FetchedTask { id: string; key: string; title: string; status: string; assignee: string; dueDate: string | null; estimatedHours: number; estimatedDetail: string; estimatedFromJira: boolean }
   type AddFlow = null | "input" | "loading" | "confirm" | "error";
@@ -433,6 +444,15 @@ export default function AgendaPage() {
   }, [openPill]);
 
   useEffect(() => {
+    if (!dayBlockMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-day-block-menu]")) setDayBlockMenu(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dayBlockMenu]);
+
+  useEffect(() => {
     const saved: Record<string, number> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
@@ -483,6 +503,23 @@ export default function AgendaPage() {
     if (Object.keys(hours).length > 0) setHoursOverrides(hours);
     if (Object.keys(pins).length > 0)  setDayPins(pins);
     if (Object.keys(excls).length > 0) setDayExclusions(excls);
+
+    try {
+      const rawH = localStorage.getItem("agenda_holidays_v1");
+      if (rawH) setHolidays(new Set(JSON.parse(rawH)));
+    } catch {}
+    const absMap: Record<string, Set<string>> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (k.startsWith("agenda_absence_") && k.endsWith("_v1")) {
+        try {
+          const mn = k.slice("agenda_absence_".length, -"_v1".length);
+          const arr = JSON.parse(localStorage.getItem(k)!);
+          if (Array.isArray(arr)) absMap[mn] = new Set(arr);
+        } catch {}
+      }
+    }
+    if (Object.keys(absMap).length > 0) setAbsences(absMap);
   }, []);
 
   // Label resize
@@ -757,6 +794,25 @@ export default function AgendaPage() {
     });
   }
 
+  function toggleHoliday(dk: string) {
+    setHolidays(prev => {
+      const next = new Set(prev);
+      if (next.has(dk)) next.delete(dk); else next.add(dk);
+      try { localStorage.setItem("agenda_holidays_v1", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
+
+  function toggleAbsence(memberName: string, dk: string) {
+    setAbsences(prev => {
+      const memberSet = new Set(prev[memberName] ?? []);
+      if (memberSet.has(dk)) memberSet.delete(dk); else memberSet.add(dk);
+      const next = { ...prev, [memberName]: memberSet };
+      try { localStorage.setItem(`agenda_absence_${memberName}_v1`, JSON.stringify([...memberSet])); } catch {}
+      return next;
+    });
+  }
+
   function sortTeam(t: MemberItem[]) {
     return [...t].sort((a, b) => {
       const ka = firstName(a.name).toLowerCase();
@@ -819,8 +875,10 @@ export default function AgendaPage() {
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
   const weekDays = days.slice(0, 5); // always 5 days — used only for at-risk cutoff
   const calDays  = ganttTwoWeeks ? days : weekDays; // drives CalendarView + buildSchedule
+  const memberAbsences = member ? (absences[member.name] ?? new Set<string>()) : new Set<string>();
+  const blockedDays    = new Set<string>([...holidays, ...memberAbsences]);
   const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(memberTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions)
+    ? buildSchedule(memberTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
@@ -1025,6 +1083,9 @@ export default function AgendaPage() {
               {calDays.map((day, dayIdx) => {
                 const dk = formatLocalDate(day);
                 const isWeekBreak = ganttTwoWeeks && dayIdx === 4; // thick right border after Fri wk1
+                const isHoliday   = holidays.has(dk);
+                const isAbsence   = member ? (absences[member.name]?.has(dk) ?? false) : false;
+                const isDayBlocked = isHoliday || isAbsence;
                 const daySlots = schedule.get(dk) ?? [];
                 const regSlots = daySlots.filter(s => s.pool === "regular");
                 const freelaSlots = daySlots.filter(s => s.pool === "freela");
@@ -1039,31 +1100,54 @@ export default function AgendaPage() {
                 return (
                   <div
                     key={dk}
-                    onDragOver={e => { e.preventDefault(); setCalDropDay(dk); }}
+                    onDragOver={e => { if (!isDayBlocked) { e.preventDefault(); setCalDropDay(dk); } }}
                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCalDropDay(null); }}
                     onDrop={e => {
                       e.preventDefault();
-                      if (calDragKey) {
+                      if (calDragKey && !isDayBlocked) {
                         const key = calDragKey;
                         setDayPins(prev => { const next = { ...prev, [key]: dk }; try { localStorage.setItem(`agenda_day_${key}`, dk); } catch {} return next; });
                       }
                       setCalDragKey(null); setCalDropDay(null);
                     }}
-                    style={{ background: isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s", boxShadow: isWeekBreak ? "6px 0 0 0 #d1d5db" : undefined }}
+                    style={{ background: isDayBlocked ? "#f3f4f6" : isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isDayBlocked ? "1px solid #d1d5db" : isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s", boxShadow: isWeekBreak ? "6px 0 0 0 #d1d5db" : undefined }}
                   >
                     {/* Day header */}
-                    <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
-                      <div>
-                        <span style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: "#111", marginLeft: 5 }}>{day.getDate()}/{day.getMonth() + 1}</span>
+                    <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isDayBlocked ? "#e9ecef" : isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <div>
+                          <span style={{ fontSize: 9, color: isDayBlocked ? "#adb5bd" : "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: isDayBlocked ? "#9ca3af" : "#111", marginLeft: 5, textDecoration: isDayBlocked ? "line-through" : "none" }}>{day.getDate()}/{day.getMonth() + 1}</span>
+                        </div>
+                        {isDayBlocked && (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: isHoliday ? "#059669" : "#dc2626", fontStyle: "italic", whiteSpace: "nowrap" }}>
+                            {isHoliday ? "🌴 Feriado" : "🚫 Ausente"}
+                          </span>
+                        )}
+                        <button
+                          data-day-block-menu=""
+                          onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setDayBlockMenu(prev => prev?.dk === dk ? null : { dk, rect }); }}
+                          title="Bloquear / desbloquear dia"
+                          style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, border: `1px solid ${isDayBlocked ? (isHoliday ? "#86efac" : "#fca5a5") : "#e5e7eb"}`, background: isDayBlocked ? (isHoliday ? "#d1fae5" : "#fee2e2") : "white", color: isDayBlocked ? (isHoliday ? "#059669" : "#dc2626") : "#9ca3af", cursor: "pointer", lineHeight: "1.5", flexShrink: 0 }}>
+                          {isDayBlocked ? "✕" : "+"}
+                        </button>
                       </div>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
-                        {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
-                      </span>
+                      {!isDayBlocked && (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
+                          {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
+                        </span>
+                      )}
                     </div>
 
                     {/* Blocks */}
                     <div style={{ padding: "6px", minHeight: COL_H, boxSizing: "border-box" }}>
+                      {isDayBlocked ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: COL_H, gap: 6, opacity: 0.6 }}>
+                          <span style={{ fontSize: 32 }}>{isHoliday ? "🌴" : "🚫"}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280" }}>{isHoliday ? "Feriado" : "Ausente"}</span>
+                          <span style={{ fontSize: 9, color: "#9ca3af" }}>sem alocação</span>
+                        </div>
+                      ) : (<>
                       {regSlots.map((slot, i) => {
                         const blockH = Math.max(36, (slot.hours / cap.regular) * COL_H);
                         const color  = projectColor(extractProject(slot.task.title));
@@ -1155,6 +1239,7 @@ export default function AgendaPage() {
                           )}
                         </div>
                       )}
+                      </>)}
                     </div>
                   </div>
                 );
@@ -1277,12 +1362,21 @@ export default function AgendaPage() {
                   </div>
                   {ganttDays.map((d, i) => {
                     const isT = sameDay(d, today);
+                    const gDk = formatLocalDate(d);
+                    const isGHoliday = holidays.has(gDk);
+                    const isGAbsence = member ? (absences[member.name]?.has(gDk) ?? false) : false;
+                    const isGBlocked = isGHoliday || isGAbsence;
                     return (
-                      <div key={i} style={{ padding: "8px 2px", textAlign: "center", borderRight: isT ? "1px solid #c4b5fd" : (!isT && i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i < ganttDays.length - 1 ? "1px solid #eef0f3" : "none", background: isT ? "#f5f3ff" : "transparent" }}>
-                        <div style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.3 }}>{dayLabel(d)}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: isT ? "white" : "#111", marginTop: 2, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, borderRadius: "50%", background: isT ? "#5b6cff" : "transparent" }}>
+                      <div key={i}
+                        data-day-block-menu=""
+                        onClick={e => { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setDayBlockMenu(prev => prev?.dk === gDk ? null : { dk: gDk, rect }); }}
+                        title={isGBlocked ? (isGHoliday ? "Feriado — clique para gerenciar" : "Ausente — clique para gerenciar") : "Clique para bloquear dia"}
+                        style={{ padding: "8px 2px 4px", textAlign: "center", cursor: "pointer", borderRight: isT ? "1px solid #c4b5fd" : (!isT && i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i < ganttDays.length - 1 ? "1px solid #eef0f3" : "none", background: isGBlocked ? "#f3f4f6" : isT ? "#f5f3ff" : "transparent", transition: "background 0.12s" }}>
+                        <div style={{ fontSize: 9, color: isGBlocked ? "#adb5bd" : "#9ca3af", textTransform: "uppercase", letterSpacing: 0.3 }}>{dayLabel(d)}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: isGBlocked ? "#adb5bd" : isT ? "white" : "#111", marginTop: 2, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, borderRadius: "50%", background: isT && !isGBlocked ? "#5b6cff" : "transparent", textDecoration: isGBlocked ? "line-through" : "none" }}>
                           {d.getDate()}
                         </div>
+                        {isGBlocked && <div style={{ fontSize: 8, lineHeight: 1 }}>{isGHoliday ? "🌴" : "🚫"}</div>}
                       </div>
                     );
                   })}
@@ -1307,7 +1401,9 @@ export default function AgendaPage() {
                 </div>
                 {ganttDays.map((d, i) => {
                   const isT = sameDay(d, today);
-                  return <div key={i} style={{ borderRight: isT ? "1px solid #c4b5fd" : (i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i === ganttDays.length - 1 ? "none" : "1px dashed #e5e7eb", background: isT ? "#f0edff" : "transparent" }} />;
+                  const pDk = formatLocalDate(d);
+                  const isPBlocked = blockedDays.has(pDk);
+                  return <div key={i} style={{ borderRight: isT ? "1px solid #c4b5fd" : (i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i === ganttDays.length - 1 ? "none" : "1px dashed #e5e7eb", background: isPBlocked ? "#f3f4f6" : isT ? "#f0edff" : "transparent" }} />;
                 })}
               </div>
 
@@ -1540,6 +1636,36 @@ export default function AgendaPage() {
       <footer style={{ textAlign: "center", padding: "20px 0 10px", fontSize: 9, color: "#d1d5db" }}>
         Creative Command Center · Brand Creative · Nuvemshop
       </footer>
+
+      {dayBlockMenu && typeof window !== "undefined" && member && (() => {
+        const dk = dayBlockMenu.dk;
+        const r  = dayBlockMenu.rect;
+        const isHol = holidays.has(dk);
+        const isAbs = absences[member.name]?.has(dk) ?? false;
+        const DW = 200;
+        const top  = Math.min(r.bottom + 4, window.innerHeight - 130);
+        const left = Math.max(4, Math.min(r.left, window.innerWidth - DW - 4));
+        const btnStyle = (active: boolean, danger: boolean): React.CSSProperties => ({
+          display: "block", width: "100%", textAlign: "left", padding: "8px 14px",
+          fontSize: 12, background: active ? (danger ? "#fff1f0" : "#f0fdf4") : "none",
+          border: "none", cursor: "pointer", color: active ? (danger ? "#dc2626" : "#059669") : "#374151",
+          fontWeight: active ? 700 : 400,
+        });
+        return createPortal(
+          <div data-day-block-menu="" style={{ position: "fixed", top, left, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 9999, minWidth: DW, overflow: "hidden" }}>
+            <div style={{ padding: "6px 14px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, borderBottom: "1px solid #f3f4f6" }}>
+              {dk.split("-").reverse().slice(0, 2).join("/")}
+            </div>
+            <button style={btnStyle(isHol, false)} onClick={() => { toggleHoliday(dk); setDayBlockMenu(null); }}>
+              {isHol ? "✕ Remover feriado 🌴" : "🌴 Feriado (todo o time)"}
+            </button>
+            <button style={{ ...btnStyle(isAbs, true), borderTop: "1px solid #f3f4f6" }} onClick={() => { toggleAbsence(member.name, dk); setDayBlockMenu(null); }}>
+              {isAbs ? `✕ Remover ausência 🚫` : `🚫 Ausência (${firstName(member.name)})`}
+            </button>
+          </div>,
+          document.body
+        );
+      })()}
 
       {openPill && typeof window !== "undefined" && (() => {
         const r = openPill.rect;
