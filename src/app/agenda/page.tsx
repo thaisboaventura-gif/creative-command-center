@@ -318,6 +318,7 @@ export default function AgendaPage() {
   const [dayExclusions,  setDayExclusions]   = useState<Record<string, string[]>>({});
   const [openAssigneeKey, setOpenAssigneeKey] = useState<string | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
+  const [ganttTwoWeeks, setGanttTwoWeeks] = useState(false);
 
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -344,6 +345,7 @@ export default function AgendaPage() {
   const days = getTwoWeekDays(page);
   const daysRef = useRef(days);
   daysRef.current = days;
+  const ganttDaysRef = useRef<Date[]>([]);
   const labelWidthRef = useRef(labelWidth);
   labelWidthRef.current = labelWidth;
 
@@ -465,9 +467,9 @@ export default function AgendaPage() {
     document.body.style.userSelect = "none";
     const onMouseMove = (e: MouseEvent) => {
       const bodyWidth = ganttBodyRef.current?.offsetWidth ?? 800;
-      const colWidth = (bodyWidth - labelWidthRef.current) / daysRef.current.length;
+      const colWidth = (bodyWidth - labelWidthRef.current) / ganttDaysRef.current.length;
       const deltaCols = Math.round((e.clientX - dragState.startX) / colWidth);
-      let newCol = Math.max(1, Math.min(daysRef.current.length, dragState.initialCol + deltaCols));
+      let newCol = Math.max(1, Math.min(ganttDaysRef.current.length, dragState.initialCol + deltaCols));
       const dp = { key: dragState.key, col: newCol };
       dragPreviewRef.current = dp;
       setDragPreview(dp);
@@ -483,7 +485,7 @@ export default function AgendaPage() {
             return next;
           });
         } else {
-          const day = days[dp.col - 1];
+          const day = ganttDaysRef.current[dp.col - 1];
           if (day) {
             const dateStr = formatLocalDate(day);
             const allTasks = team.flatMap((m) => m.tasks);
@@ -666,7 +668,9 @@ export default function AgendaPage() {
 
   const today = new Date();
   const todayMidnight = new Date(today); todayMidnight.setHours(0, 0, 0, 0);
-  const GRID_COLS = `${labelWidth}px repeat(${days.length}, 1fr)`;
+  const ganttDays = ganttTwoWeeks ? days : days.slice(0, 5);
+  ganttDaysRef.current = ganttDays;
+  const GRID_COLS = `${labelWidth}px repeat(${ganttDays.length}, 1fr)`;
 
   const sorted = sortTeam(team);
   const member = sorted.find(m => m.name === selectedMember) ?? sorted[0] ?? null;
@@ -1080,6 +1084,18 @@ export default function AgendaPage() {
       {member && (
         <div style={{ background: "white", borderRadius: 12, border: "1px solid #eef0f3" }}>
 
+          {/* Gantt header toolbar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 0", gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>
+              📊 Gantt — {firstName(member.name)}
+            </span>
+            <button
+              onClick={() => setGanttTwoWeeks(v => !v)}
+              style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${ganttTwoWeeks ? "#7c3aed" : "#e5e7eb"}`, background: ganttTwoWeeks ? "#ede9fe" : "white", color: ganttTwoWeeks ? "#7c3aed" : "#374151", cursor: "pointer", transition: "all 0.15s" }}>
+              {ganttTwoWeeks ? "📅 Ver 1 semana" : "📅 Ver 2 semanas"}
+            </button>
+          </div>
+
           {/* Sticky header */}
           <div style={{ position: "sticky", top: 0, zIndex: 10, overflow: "hidden", background: "white", borderBottom: "1px solid #eef0f3" }}>
             <div ref={ganttHeaderRef} onScroll={(e) => { if (ganttBodyRef.current) ganttBodyRef.current.scrollLeft = e.currentTarget.scrollLeft; }} style={{ overflowX: "auto", paddingBottom: 20, marginBottom: -20 }}>
@@ -1092,10 +1108,10 @@ export default function AgendaPage() {
                       <div style={{ width: 3, height: 18, background: isResizingLabel ? "#7c3aed" : "#e5e7eb", borderRadius: 2 }} />
                     </div>
                   </div>
-                  {days.map((d, i) => {
+                  {ganttDays.map((d, i) => {
                     const isT = sameDay(d, today);
                     return (
-                      <div key={i} style={{ padding: "8px 2px", textAlign: "center", borderRight: isT ? "1px solid #c4b5fd" : (!isT && i < days.length - 1 && days[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i < days.length - 1 ? "1px solid #eef0f3" : "none", background: isT ? "#f5f3ff" : "transparent" }}>
+                      <div key={i} style={{ padding: "8px 2px", textAlign: "center", borderRight: isT ? "1px solid #c4b5fd" : (!isT && i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i < ganttDays.length - 1 ? "1px solid #eef0f3" : "none", background: isT ? "#f5f3ff" : "transparent" }}>
                         <div style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.3 }}>{dayLabel(d)}</div>
                         <div style={{ fontSize: 12, fontWeight: 700, color: isT ? "white" : "#111", marginTop: 2, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, borderRadius: "50%", background: isT ? "#5b6cff" : "transparent" }}>
                           {d.getDate()}
@@ -1122,9 +1138,9 @@ export default function AgendaPage() {
                     {backlog > 0 && <div style={{ fontSize: 9, color: "#d1d5db" }}>+{backlog} sem prazo</div>}
                   </div>
                 </div>
-                {days.map((d, i) => {
+                {ganttDays.map((d, i) => {
                   const isT = sameDay(d, today);
-                  return <div key={i} style={{ borderRight: isT ? "1px solid #c4b5fd" : (i < days.length - 1 && days[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i === days.length - 1 ? "none" : "1px dashed #e5e7eb", background: isT ? "#f0edff" : "transparent" }} />;
+                  return <div key={i} style={{ borderRight: isT ? "1px solid #c4b5fd" : (i < ganttDays.length - 1 && ganttDays[i + 1].getDay() === 1) ? "2px solid #9ca3af" : i === ganttDays.length - 1 ? "none" : "1px dashed #e5e7eb", background: isT ? "#f0edff" : "transparent" }} />;
                 })}
               </div>
 
@@ -1132,7 +1148,7 @@ export default function AgendaPage() {
               <div ref={memberSectionRef} style={{ position: "relative" }}>
                 {orderedParents.map((parent, pIdx) => {
                   const ct = PALETTE[pIdx % PALETTE.length];
-                  const parentBars = layoutBars([parent], days, startOverrides);
+                  const parentBars = layoutBars([parent], ganttDays, startOverrides);
                   const parentBar = parentBars[0] ?? null;
                   const children = childMap.get(parent.key) ?? [];
                   const isCollapsed = collapsed.has(parent.key);
@@ -1153,8 +1169,8 @@ export default function AgendaPage() {
                       if (!latest || d > latest) latest = d;
                     }
                     if (!latest) return null;
-                    for (let j = 0; j < days.length; j++) {
-                      const dj = new Date(days[j]); dj.setHours(0, 0, 0, 0);
+                    for (let j = 0; j < ganttDays.length; j++) {
+                      const dj = new Date(ganttDays[j]); dj.setHours(0, 0, 0, 0);
                       if (dj.getTime() === latest.getTime()) return j;
                     }
                     return null;
@@ -1220,7 +1236,7 @@ export default function AgendaPage() {
                           })()}
                         </div>
 
-                        {days.map((d, i) => {
+                        {ganttDays.map((d, i) => {
                           const isT = sameDay(d, today);
                           const cellN = i + 1;
                           const dispStart = parentStartIdx + 1;
@@ -1229,8 +1245,8 @@ export default function AgendaPage() {
                           const isDueCell = parentBar && cellN === dispEnd && inParentRange;
                           const isDeadlineCell = isDueCell && !allSubsDone;
                           const isAllDoneCell = allDoneColIdx !== null && i === allDoneColIdx;
-                          const isLast = i === days.length - 1;
-                          const isWeekEnd = !isLast && days[i + 1].getDay() === 1;
+                          const isLast = i === ganttDays.length - 1;
+                          const isWeekEnd = !isLast && ganttDays[i + 1].getDay() === 1;
                           const borderRight = isT ? "1px solid #c4b5fd" : isDeadlineCell ? `2px solid ${ct.border}` : isWeekEnd ? "2px solid #9ca3af" : isLast ? "none" : "1px dashed #e5e7eb";
 
                           return (
@@ -1252,7 +1268,7 @@ export default function AgendaPage() {
 
                       {/* Subtask rows */}
                       {!isCollapsed && children.map((sub) => {
-                        const subBars = layoutBars([sub], days, startOverrides);
+                        const subBars = layoutBars([sub], ganttDays, startOverrides);
                         const subBar = subBars[0] ?? null;
                         const isBeingDraggedSub = dragPreview?.key === sub.id;
                         let subStartIdx = subBar ? subBar.startCol - 1 : -1;
@@ -1312,17 +1328,17 @@ export default function AgendaPage() {
                                 );
                               })()}
                             </div>
-                            {days.map((d, i) => {
+                            {ganttDays.map((d, i) => {
                               const isT = sameDay(d, today);
                               const cellN = i + 1;
                               const inSubRange = subBar && cellN >= dispSubStart && cellN <= dispSubEnd;
                               const isAfterDue = subBar && !inSubRange && cellN > dispSubEnd;
                               const isOverdueDay = !!subBar?.overdue && !sub.status.includes("done") && !isWaiting;
                               const isSubDueCell = subBar && cellN === dispSubEnd && inSubRange;
-                              const isLastCell = i === days.length - 1;
+                              const isLastCell = i === ganttDays.length - 1;
                               const showExcl = isAfterDue && isOverdueDay && d <= today;
                               const showWaiting = isSubDueCell && isWaiting;
-                              const isSubWeekEnd = !isLastCell && days[i + 1].getDay() === 1;
+                              const isSubWeekEnd = !isLastCell && ganttDays[i + 1].getDay() === 1;
                               const subCellBorder = isT ? "1px solid #c4b5fd" : isSubDueCell && !isWaiting ? `2px solid ${subBorder}` : isSubWeekEnd ? "2px solid #9ca3af" : isLastCell ? "none" : "1px dashed #e5e7eb";
 
                               return (
