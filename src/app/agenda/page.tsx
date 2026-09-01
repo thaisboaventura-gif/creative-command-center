@@ -942,12 +942,12 @@ export default function AgendaPage() {
                             draggable
                             onDragStart={e => { e.stopPropagation(); setCalDragKey(slot.task.id); }}
                             onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }}
-                            onClick={() => window.open(`${JIRA}/${slot.task.key}`, "_blank")}
+                            onClick={() => setEditingBlock({ taskId: slot.task.id, hours: hoursOverrides[slot.task.id] ?? slot.task.estimatedHours })}
                             title={slot.task.title}
                             style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "pointer", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
                             <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
-                              {slot.continuation && <span style={{ fontSize: 8, fontWeight: 700, color: "#9ca3af", marginRight: 3 }}>↪</span>}{slot.task.title}
+                              {slot.continuation && <span style={{ fontSize: 8, fontWeight: 700, color: "#9ca3af", marginRight: 3 }}>↪</span>}<a href={`${JIRA}/${slot.task.key}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{slot.task.title}</a>
                             </div>
                             {blockH > 56 && (() => {
                               const ACCENT = areaC;
@@ -1006,10 +1006,9 @@ export default function AgendaPage() {
                             const color2  = projectColor(extractProject(slot2.task.title));
                             return (
                               <div key={j}
-                                onClick={() => window.open(`${JIRA}/${slot2.task.key}`, "_blank")}
                                 title={slot2.task.title}
-                                style={{ height: blockH2, marginBottom: 3, borderRadius: 5, background: hexToRgba(color2, 0.12), borderLeft: `3px solid ${color2}`, padding: "3px 6px", overflow: "hidden", cursor: "pointer", userSelect: "none", boxSizing: "border-box" }}>
-                                <div style={{ fontSize: 9, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{slot2.task.title}</div>
+                                style={{ height: blockH2, marginBottom: 3, borderRadius: 5, background: hexToRgba(color2, 0.12), borderLeft: `3px solid ${color2}`, padding: "3px 6px", overflow: "hidden", userSelect: "none", boxSizing: "border-box" }}>
+                                <div style={{ fontSize: 9, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><a href={`${JIRA}/${slot2.task.key}`} target="_blank" rel="noopener noreferrer" style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{slot2.task.title}</a></div>
                                 <div style={{ fontSize: 8, color: "#6b7280" }}>{fmtH(slot2.hours)}</div>
                               </div>
                             );
@@ -1056,8 +1055,8 @@ export default function AgendaPage() {
                 const curUser = assignableUsers.find(u => u.displayName === task.assignee);
                 const pillLabel = curUser ? curUser.firstName : (task.assignee ? task.assignee.split(/[\s.]/)[0] : "—");
                 return (
-                  <div key={task.id} onClick={() => window.open(`${JIRA}/${task.key}`, "_blank")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}`, cursor: "pointer" }}>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
+                  <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}` }}>
+                    <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{task.title}</a>
                     <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
                     <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                       <button
@@ -1223,7 +1222,7 @@ export default function AgendaPage() {
 
                       {/* Parent row */}
                       <div style={{ display: "grid", gridTemplateColumns: GRID_COLS, borderBottom: "1px solid #e9ecef", minHeight: 32, background: hexToRgba(ct.bg, 0.15), opacity: isVertDraggingThis ? 0.35 : 1 }}>
-                        <div onClick={() => window.open(`${JIRA}/${parent.key}`, "_blank")} style={{ padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`, display: "flex", alignItems: "center", gap: 4, minWidth: 0, cursor: "pointer" }}>
+                        <div style={{ padding: "0 6px 0 8px", borderLeft: `4px solid ${ct.bg}`, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                           <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setVertDrag({ memberName: member.name, taskId: parent.id, fromIdx: pIdx }); vertDropIdxRef.current = { memberName: member.name, idx: pIdx }; setVertDropIdx({ memberName: member.name, idx: pIdx }); }}
                             title="Arrastar para reordenar" style={{ cursor: "ns-resize", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, height: 14, padding: "0 2px" }}>
                             {[0, 1, 2].map(i => <div key={i} style={{ width: 8, height: 1.5, background: ct.subtleText + "80", borderRadius: 1 }} />)}
@@ -1234,8 +1233,9 @@ export default function AgendaPage() {
                             </button>
                           )}
                           <a href={`${JIRA}/${parent.key}`} target="_blank" rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
                             style={{ fontSize: 11, fontWeight: 700, color: ct.subtleText, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
+                            onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")}
+                            onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}
                             title={parent.title}>{parent.title}</a>
                           <button
                             onClick={e => { e.stopPropagation(); toggleFlag(parent.key, !!parent.flagged); }}
@@ -1325,11 +1325,12 @@ export default function AgendaPage() {
 
                         return (
                           <div key={sub.key} style={{ display: "grid", gridTemplateColumns: GRID_COLS, borderBottom: "1px solid #f0f0f0", minHeight: 28, background: hexToRgba(ct.bg, 0.06) }}>
-                            <div onClick={() => window.open(`${JIRA}/${sub.key}`, "_blank")} style={{ padding: "0 6px 0 20px", display: "flex", alignItems: "center", gap: 4, minWidth: 0, cursor: "pointer" }}>
+                            <div style={{ padding: "0 6px 0 20px", display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                               <span style={{ color: "#d1d5db", fontSize: 10, flexShrink: 0 }}>↳</span>
                               <a href={`${JIRA}/${sub.key}`} target="_blank" rel="noopener noreferrer"
-                                onClick={e => e.stopPropagation()}
                                 style={{ fontSize: 10, fontWeight: 400, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: "none", minWidth: 0 }}
+                                onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")}
+                                onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}
                                 title={sub.title}>{sub.title}</a>
                               <button
                                 onClick={e => { e.stopPropagation(); toggleFlag(sub.key, !!sub.flagged); }}
