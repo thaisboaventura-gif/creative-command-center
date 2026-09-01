@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /* ── Interfaces ── */
 
@@ -351,7 +352,8 @@ export default function AgendaPage() {
   const [calDragKey,     setCalDragKey]      = useState<string | null>(null);
   const [calDropDay,     setCalDropDay]      = useState<string | null>(null);
   const [dayExclusions,  setDayExclusions]   = useState<Record<string, string[]>>({});
-  const [openAssigneeKey, setOpenAssigneeKey] = useState<string | null>(null);
+  interface PillPortal { key: string; taskKey: string; currentAssignee: string; accent: string; rect: DOMRect }
+  const [openPill, setOpenPill] = useState<PillPortal | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
   const [ganttTwoWeeks, setGanttTwoWeeks] = useState(false);
 
@@ -412,13 +414,13 @@ export default function AgendaPage() {
   }, []);
 
   useEffect(() => {
-    if (!openAssigneeKey) return;
+    if (!openPill) return;
     const handler = (e: MouseEvent) => {
-      if (!(e.target as Element).closest("[data-assignee-pill]")) setOpenAssigneeKey(null);
+      if (!(e.target as Element).closest("[data-assignee-pill]")) setOpenPill(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [openAssigneeKey]);
+  }, [openPill]);
 
   useEffect(() => {
     const saved: Record<string, number> = {};
@@ -957,7 +959,7 @@ export default function AgendaPage() {
                             </div>
                             {blockH > 56 && (() => {
                               const ACCENT = areaC;
-                              const isDropOpen = openAssigneeKey === slot.task.id;
+                              const pillKey = slot.task.id + "|" + dk;
                               const curUser = assignableUsers.find(u => u.displayName === slot.task.assignee);
                               const pillLabel = curUser ? curUser.firstName : (slot.task.assignee ? slot.task.assignee.split(/[\s.]/)[0] : "—");
                               return (
@@ -965,18 +967,15 @@ export default function AgendaPage() {
                                   <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: chip.bg, color: chip.color, whiteSpace: "nowrap", overflow: "hidden", maxWidth: "50%" }}>{chip.label}</span>
                                   <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                     <button
-                                      onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : slot.task.id); }}
-                                      style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? ACCENT : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? ACCENT : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        if (openPill?.key === pillKey) { setOpenPill(null); return; }
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        setOpenPill({ key: pillKey, taskKey: slot.task.key, currentAssignee: slot.task.assignee, accent: ACCENT, rect });
+                                      }}
+                                      style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === pillKey ? ACCENT : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? ACCENT : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
                                       {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
                                     </button>
-                                    {isDropOpen && (
-                                      <div style={{ position: "absolute", bottom: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
-                                        <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(slot.task.key, null, slot.task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
-                                        {assignableUsers.map(u => (
-                                          <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(slot.task.key, u.accountId, slot.task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${ACCENT}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? ACCENT : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
-                                        ))}
-                                      </div>
-                                    )}
                                   </div>
                                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0, gap: 1 }}>
                                     <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(slot.hours)}{slot.continuation ? <span style={{ fontWeight: 400, color: "#9ca3af" }}> (cont.)</span> : null}</span>
@@ -1057,7 +1056,6 @@ export default function AgendaPage() {
                 const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
                 const color = projectColor(extractProject(task.title));
                 const upKey = "up-" + task.key;
-                const isDropOpen = openAssigneeKey === upKey;
                 const curUser = assignableUsers.find(u => u.displayName === task.assignee);
                 const pillLabel = curUser ? curUser.firstName : (task.assignee ? task.assignee.split(/[\s.]/)[0] : "—");
                 return (
@@ -1066,18 +1064,15 @@ export default function AgendaPage() {
                     <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
                     <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                       <button
-                        onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : upKey); }}
-                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (openPill?.key === upKey) { setOpenPill(null); return; }
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setOpenPill({ key: upKey, taskKey: task.key, currentAssignee: task.assignee, accent: areaC, rect });
+                        }}
+                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === upKey ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
                         {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
                       </button>
-                      {isDropOpen && (
-                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
-                          <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(task.key, null, task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
-                          {assignableUsers.map(u => (
-                            <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(task.key, u.accountId, task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
-                          ))}
-                        </div>
-                      )}
                     </div>
                     {due && <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
                     <button
@@ -1253,7 +1248,6 @@ export default function AgendaPage() {
                             const parentOverdue = parentDue !== null && parentDue < todayMidnight && parent.status !== "done" && parent.status !== "in_review";
                             const chip = statusChipProps(parent.status, parentOverdue);
                             const gpKey = "gp-" + parent.key;
-                            const isDropOpen = openAssigneeKey === gpKey;
                             const curUser = assignableUsers.find(u => u.displayName === parent.assignee);
                             const pillLabel = curUser ? curUser.firstName : (parent.assignee ? parent.assignee.split(/[\s.]/)[0] : "—");
                             return (
@@ -1262,18 +1256,15 @@ export default function AgendaPage() {
                                 <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20, background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>{chip.label}</span>
                                 <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                   <button
-                                    onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : gpKey); }}
-                                    style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      if (openPill?.key === gpKey) { setOpenPill(null); return; }
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      setOpenPill({ key: gpKey, taskKey: parent.key, currentAssignee: parent.assignee, accent: areaC, rect });
+                                    }}
+                                    style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === gpKey ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
                                     {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
                                   </button>
-                                  {isDropOpen && (
-                                    <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
-                                      <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(parent.key, null, parent.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
-                                      {assignableUsers.map(u => (
-                                        <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(parent.key, u.accountId, parent.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
-                                      ))}
-                                    </div>
-                                  )}
                                 </div>
                               </>
                             );
@@ -1348,7 +1339,6 @@ export default function AgendaPage() {
                                 const subOverdue2 = subDue2 !== null && subDue2 < todayMidnight && sub.status !== "done" && sub.status !== "in_review";
                                 const chip = statusChipProps(sub.status, subOverdue2);
                                 const gsKey = "gs-" + sub.key;
-                                const isDropOpen = openAssigneeKey === gsKey;
                                 const curUser = assignableUsers.find(u => u.displayName === sub.assignee);
                                 const pillLabel = curUser ? curUser.firstName : (sub.assignee ? sub.assignee.split(/[\s.]/)[0] : "—");
                                 return (
@@ -1357,18 +1347,15 @@ export default function AgendaPage() {
                                     <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 20, background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>{chip.label}</span>
                                     <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                       <button
-                                        onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : gsKey); }}
-                                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                        onClick={e => {
+                                          e.stopPropagation();
+                                          if (openPill?.key === gsKey) { setOpenPill(null); return; }
+                                          const rect = e.currentTarget.getBoundingClientRect();
+                                          setOpenPill({ key: gsKey, taskKey: sub.key, currentAssignee: sub.assignee, accent: areaC, rect });
+                                        }}
+                                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === gsKey ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
                                         {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
                                       </button>
-                                      {isDropOpen && (
-                                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
-                                          <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(sub.key, null, sub.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
-                                          {assignableUsers.map(u => (
-                                            <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(sub.key, u.accountId, sub.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
-                                          ))}
-                                        </div>
-                                      )}
                                     </div>
                                   </>
                                 );
@@ -1423,6 +1410,33 @@ export default function AgendaPage() {
       <footer style={{ textAlign: "center", padding: "20px 0 10px", fontSize: 9, color: "#d1d5db" }}>
         Creative Command Center · Brand Creative · Nuvemshop
       </footer>
+
+      {openPill && typeof window !== "undefined" && (() => {
+        const r = openPill.rect;
+        const DW = 130, DH = 260;
+        const top = r.bottom + 4 + DH > window.innerHeight ? Math.max(4, r.top - DH - 4) : r.bottom + 4;
+        const left = Math.max(4, Math.min(r.right - DW, window.innerWidth - DW - 4));
+        const curUser = assignableUsers.find(u => u.displayName === openPill.currentAssignee);
+        return createPortal(
+          <div
+            data-assignee-pill=""
+            style={{ position: "fixed", top, left, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 9999, minWidth: DW, maxHeight: DH, overflowY: "auto" }}>
+            <button
+              onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(openPill.taskKey, null, openPill.currentAssignee); setOpenPill(null); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>
+              — Sem responsável
+            </button>
+            {assignableUsers.map(u => (
+              <button key={u.accountId}
+                onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(openPill.taskKey, u.accountId, openPill.currentAssignee); setOpenPill(null); }}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${openPill.accent}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? openPill.accent : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>
+                {u.firstName}
+              </button>
+            ))}
+          </div>,
+          document.body
+        );
+      })()}
     </Shell>
   );
 }
