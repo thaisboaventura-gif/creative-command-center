@@ -108,6 +108,17 @@ const PERSON_CAP: Record<string, number> = {
   rafa:       8,
 };
 
+const TEAM_MEMBERS = [
+  { accountId: "606b0eca126db9006ff686fd",                        firstName: "Diego",     displayName: "Diego Pacheco" },
+  { accountId: "712020:4648823a-0cdc-4178-b186-597098121542",     firstName: "Eduardo",   displayName: "Eduardo Oliveira da Cunha" },
+  { accountId: "712020:1c6e64dd-e07e-45ee-ac9d-269a41f54b81",     firstName: "Gabriel",   displayName: "gabriel.cassino" },
+  { accountId: "712020:2ee0f456-77e7-4f2a-8502-ff712b3ba6da",     firstName: "João",      displayName: "joao.camargo" },
+  { accountId: "61b39fc4d2e64c0071f160d5",                        firstName: "Larissa",   displayName: "larissa.delarue" },
+  { accountId: "712020:e2200010-bf69-4f6e-87a4-a792c42d8837",     firstName: "Rafaela",   displayName: "rafaela.ceragioli" },
+  { accountId: "712020:43dc008c-b04d-4435-a6b7-6686d42eb1ac",     firstName: "Tina",      displayName: "Tina Vega" },
+  { accountId: "712020:869612ee-e019-461a-af63-eaf8c18871c3",     firstName: "Florencia", displayName: "Florencia Garia Mendoza" },
+];
+
 function normFirst(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(" ")[0];
 }
@@ -525,6 +536,30 @@ export default function D2CEventoDashboard() {
     }
   }
 
+  async function changeAssignee(taskKey: string, newAccountId: string | null, oldDisplayName: string) {
+    const member = TEAM_MEMBERS.find(m => m.accountId === newAccountId);
+    const newDisplayName = member?.displayName ?? "";
+    setTasks(prev => prev.map(t => ({
+      ...t,
+      assignee: t.key === taskKey ? newDisplayName : t.assignee,
+      subtasks: t.subtasks.map(st => st.key === taskKey ? { ...st, assignee: newDisplayName } : st),
+    })));
+    try {
+      const res = await fetch("/api/jira/assignee", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey: taskKey, accountId: newAccountId }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      setTasks(prev => prev.map(t => ({
+        ...t,
+        assignee: t.key === taskKey ? oldDisplayName : t.assignee,
+        subtasks: t.subtasks.map(st => st.key === taskKey ? { ...st, assignee: oldDisplayName } : st),
+      })));
+    }
+  }
+
   /* ── Tooltip ── */
   function showTooltip(data: TooltipState) { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); setTooltip(data); }
   function hideTooltip() { tooltipTimer.current = setTimeout(() => setTooltip(null), 160); }
@@ -817,12 +852,16 @@ export default function D2CEventoDashboard() {
           <span title={task.title} style={{ fontSize: indent ? 11 : 12, color: "#374151", fontWeight: isParent ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {task.title}
           </span>
-          <span
-            title={(task as PerfTask).assignee || "Sem responsável"}
-            style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 72 }}
+          <select
+            title="Responsável"
+            value={TEAM_MEMBERS.find(m => m.displayName === ((task as PerfTask).assignee || (task as PerfSubtask).assignee))?.accountId ?? ""}
+            onChange={e => { e.stopPropagation(); changeAssignee(taskKey, e.target.value || null, (task as PerfTask).assignee || (task as PerfSubtask).assignee || ""); }}
+            onClick={e => e.stopPropagation()}
+            style={{ fontSize: 10, color: "#6b7280", background: "transparent", border: "none", cursor: "pointer", flexShrink: 0, maxWidth: 72, padding: 0, outline: "none" }}
           >
-            {((task as PerfTask).assignee || "").split(" ")[0] || "—"}
-          </span>
+            <option value="">—</option>
+            {TEAM_MEMBERS.map(m => <option key={m.accountId} value={m.accountId}>{m.firstName}</option>)}
+          </select>
           <button
             onClick={e => { e.stopPropagation(); toggleFlag(taskKey, !!((task as PerfTask).flagged || (task as PerfSubtask).flagged)); }}
             title={(task as PerfTask).flagged || (task as PerfSubtask).flagged ? "Remover marcação" : "Marcar task"}
