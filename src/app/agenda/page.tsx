@@ -207,21 +207,30 @@ function getDailyCap(name: string): { regular: number; freela: number } {
 
 interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela" }
 
-function buildSchedule(tasks: TaskItem[], days: Date[], cap: { regular: number; freela: number }): Map<string, DaySlot[]> {
+function buildSchedule(
+  tasks: TaskItem[],
+  days: Date[],
+  cap: { regular: number; freela: number },
+  hoursOverrides: Record<string, number> = {},
+  dayPins: Record<string, string> = {},
+): Map<string, DaySlot[]> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
   const slots = new Map<string, DaySlot[]>(days.map(d => [formatLocalDate(d), []]));
 
   const active = tasks
-    .filter(t => t.status !== "done" && t.estimatedHours > 0 && t.dueDate)
+    .filter(t => t.status !== "done" && (hoursOverrides[t.id] ?? t.estimatedHours) > 0 && t.dueDate)
     .sort((a, b) => parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime());
 
   for (const task of active) {
-    let rem = task.estimatedHours;
+    let rem = hoursOverrides[task.id] ?? task.estimatedHours;
     const deadline = parseLocalDate(task.dueDate!);
-    const eligible = days
-      .filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; })
-      .slice().reverse();
+    const pinKey = dayPins[task.id];
+    const eligible = pinKey
+      ? days.filter(d => formatLocalDate(d) === pinKey)
+      : days
+          .filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; })
+          .slice().reverse();
 
     for (const d of eligible) {
       if (rem <= 0) break;
@@ -269,6 +278,12 @@ export default function AgendaPage() {
   const [page, setPage] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
+
+  const [hoursOverrides, setHoursOverrides] = useState<Record<string, number>>({});
+  const [dayPins,        setDayPins]         = useState<Record<string, string>>({});
+  const [editingBlock,   setEditingBlock]    = useState<{ taskId: string; hours: number } | null>(null);
+  const [calDragKey,     setCalDragKey]      = useState<string | null>(null);
+  const [calDropDay,     setCalDropDay]      = useState<string | null>(null);
 
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -345,6 +360,22 @@ export default function AgendaPage() {
 
     const savedW = parseInt(localStorage.getItem(LABEL_W_KEY) ?? "");
     if (!isNaN(savedW) && savedW >= 120) setLabelWidth(savedW);
+
+    const hours: Record<string, number> = {};
+    const pins:  Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (k.startsWith("agenda_hours_")) {
+        const v = parseFloat(localStorage.getItem(k)!);
+        if (!isNaN(v)) hours[k.slice("agenda_hours_".length)] = v;
+      }
+      if (k.startsWith("agenda_day_")) {
+        const v = localStorage.getItem(k)!;
+        if (v) pins[k.slice("agenda_day_".length)] = v;
+      }
+    }
+    if (Object.keys(hours).length > 0) setHoursOverrides(hours);
+    if (Object.keys(pins).length > 0)  setDayPins(pins);
   }, []);
 
   // Label resize
@@ -581,7 +612,7 @@ export default function AgendaPage() {
 
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
   const weekDays = days.slice(0, 5);
-  const schedule = member ? buildSchedule(member.tasks, weekDays, cap) : new Map<string, DaySlot[]>();
+  const schedule = member ? buildSchedule(member.tasks, weekDays, cap, hoursOverrides, dayPins) : new Map<string, DaySlot[]>();
 
   return (
     <Shell>
@@ -604,6 +635,61 @@ export default function AgendaPage() {
           </div>
         </div>
       )}
+
+      {/* Hours edit popover */}
+      {editingBlock && (() => {
+        const task = member?.tasks.find(t => t.id === editingBlock.taskId);
+        const hasOverride = hoursOverrides[editingBlock.taskId] !== undefined || dayPins[editingBlock.taskId] !== undefined;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
+            onClick={() => setEditingBlock(null)}>
+            <div style={{ background: "white", borderRadius: 14, padding: "22px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.16)" }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#111", marginBottom: 4 }}>Editar duração</div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                title={task?.title}>{task?.title}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+                <label style={{ fontSize: 12, color: "#374151", flexShrink: 0 }}>Horas estimadas:</label>
+                <input
+                  type="number" min={0.5} max={40} step={0.5}
+                  value={editingBlock.hours}
+                  onChange={e => setEditingBlock(prev => prev ? { ...prev, hours: parseFloat(e.target.value) || 0.5 } : null)}
+                  style={{ width: 68, padding: "6px 10px", borderRadius: 7, border: "1.5px solid #c4b5fd", fontSize: 14, fontWeight: 700, textAlign: "center", outline: "none", color: "#7c3aed" }}
+                  autoFocus
+                />
+                <span style={{ fontSize: 12, color: "#9ca3af" }}>h</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setEditingBlock(null)}
+                  style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e5e7eb", background: "white", fontSize: 12, cursor: "pointer", color: "#374151" }}>Cancelar</button>
+                <button
+                  onClick={() => {
+                    const h = Math.max(0.5, editingBlock.hours);
+                    setHoursOverrides(prev => {
+                      const next = { ...prev, [editingBlock.taskId]: h };
+                      try { localStorage.setItem(`agenda_hours_${editingBlock.taskId}`, String(h)); } catch {}
+                      return next;
+                    });
+                    setEditingBlock(null);
+                  }}
+                  style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#7c3aed", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Salvar</button>
+              </div>
+              {hasOverride && (
+                <button
+                  onClick={() => {
+                    const id = editingBlock.taskId;
+                    setHoursOverrides(prev => { const n = {...prev}; delete n[id]; try { localStorage.removeItem(`agenda_hours_${id}`); } catch {} return n; });
+                    setDayPins(prev => { const n = {...prev}; delete n[id]; try { localStorage.removeItem(`agenda_day_${id}`); } catch {} return n; });
+                    setEditingBlock(null);
+                  }}
+                  style={{ marginTop: 12, width: "100%", padding: "6px", border: "none", background: "none", fontSize: 11, color: "#9ca3af", cursor: "pointer", textAlign: "center" }}>
+                  ↩ Limpar overrides desta task
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
@@ -650,6 +736,132 @@ export default function AgendaPage() {
           );
         })}
       </div>
+
+      {/* Calendar View */}
+      {member && (() => {
+        const COL_H = 300;
+        return (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              🗓 Semana — {firstName(member.name)}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+              {weekDays.map(day => {
+                const dk = formatLocalDate(day);
+                const daySlots = schedule.get(dk) ?? [];
+                const regSlots = daySlots.filter(s => s.pool === "regular");
+                const freelaSlots = daySlots.filter(s => s.pool === "freela");
+                const regUsed  = regSlots.reduce((s, a)  => s + a.hours, 0);
+                const freelaUsed = freelaSlots.reduce((s, a) => s + a.hours, 0);
+                const regFree  = Math.max(0, cap.regular - regUsed);
+                const freelaFree = Math.max(0, cap.freela - freelaUsed);
+                const isT = sameDay(day, today);
+                const isDropTarget = calDropDay === dk;
+                const overloaded = regFree < 0.1 && (cap.freela === 0 || freelaFree < 0.1);
+
+                return (
+                  <div
+                    key={dk}
+                    onDragOver={e => { e.preventDefault(); setCalDropDay(dk); }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCalDropDay(null); }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      if (calDragKey) {
+                        const key = calDragKey;
+                        setDayPins(prev => { const next = { ...prev, [key]: dk }; try { localStorage.setItem(`agenda_day_${key}`, dk); } catch {} return next; });
+                      }
+                      setCalDragKey(null); setCalDropDay(null);
+                    }}
+                    style={{ background: isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s" }}
+                  >
+                    {/* Day header */}
+                    <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
+                      <div>
+                        <span style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#111", marginLeft: 5 }}>{day.getDate()}/{day.getMonth() + 1}</span>
+                      </div>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
+                        {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
+                      </span>
+                    </div>
+
+                    {/* Blocks */}
+                    <div style={{ padding: "6px", minHeight: COL_H, boxSizing: "border-box" }}>
+                      {regSlots.map((slot, i) => {
+                        const blockH = Math.max(36, (slot.hours / cap.regular) * COL_H);
+                        const color  = projectColor(extractProject(slot.task.title));
+                        const isDraggingThis = calDragKey === slot.task.id;
+                        const due    = slot.task.dueDate ? parseLocalDate(slot.task.dueDate) : null;
+                        const overdue = due && due < todayMidnight && slot.task.status !== "done" && slot.task.status !== "in_review";
+                        const chip   = statusChipProps(slot.task.status, !!overdue);
+                        const isPinned  = !!dayPins[slot.task.id];
+                        const isEdited  = hoursOverrides[slot.task.id] !== undefined;
+
+                        return (
+                          <div
+                            key={slot.task.id + i}
+                            draggable
+                            onDragStart={e => { e.stopPropagation(); setCalDragKey(slot.task.id); }}
+                            onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }}
+                            onClick={() => setEditingBlock({ taskId: slot.task.id, hours: hoursOverrides[slot.task.id] ?? slot.task.estimatedHours })}
+                            title={slot.task.title}
+                            style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "grab", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
+                          >
+                            <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3 }}>
+                              {isPinned && <span style={{ fontSize: 8, marginRight: 2 }}>📌</span>}
+                              {isEdited && <span style={{ fontSize: 8, marginRight: 2 }}>✏️</span>}
+                              {slot.task.title}
+                            </div>
+                            {blockH > 56 && (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+                                <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: chip.bg, color: chip.color, whiteSpace: "nowrap", overflow: "hidden", maxWidth: "72%" }}>{chip.label}</span>
+                                {due && <span style={{ fontSize: 8, color: "#9ca3af", flexShrink: 0 }}>{due.getDate()}/{due.getMonth() + 1}</span>}
+                              </div>
+                            )}
+                            <span style={{ position: "absolute", bottom: 3, right: 5, fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700, pointerEvents: "none" }}>{fmtH(slot.hours)}</span>
+                          </div>
+                        );
+                      })}
+
+                      {/* Free time block */}
+                      {regFree > 0.1 && (
+                        <div style={{ height: Math.max(22, (regFree / cap.regular) * COL_H - 6), borderRadius: 7, background: "#f9fafb", border: "1.5px dashed #e5e7eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <span style={{ fontSize: 9, color: "#d1d5db", userSelect: "none" }}>{fmtH(regFree)} livre</span>
+                        </div>
+                      )}
+
+                      {/* Freela pool */}
+                      {cap.freela > 0 && (
+                        <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1.5px dashed #fed7aa" }}>
+                          <div style={{ fontSize: 8, color: "#ea580c", fontWeight: 700, marginBottom: 3 }}>🤝 freela</div>
+                          {freelaSlots.map((slot2, j) => {
+                            const blockH2 = Math.max(28, (slot2.hours / cap.freela) * 100);
+                            const color2  = projectColor(extractProject(slot2.task.title));
+                            return (
+                              <div key={j}
+                                onClick={() => setEditingBlock({ taskId: slot2.task.id, hours: hoursOverrides[slot2.task.id] ?? slot2.task.estimatedHours })}
+                                title={slot2.task.title}
+                                style={{ height: blockH2, marginBottom: 3, borderRadius: 5, background: hexToRgba(color2, 0.12), borderLeft: `3px solid ${color2}`, padding: "3px 6px", overflow: "hidden", cursor: "pointer", userSelect: "none", boxSizing: "border-box" }}>
+                                <div style={{ fontSize: 9, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{slot2.task.title}</div>
+                                <div style={{ fontSize: 8, color: "#6b7280" }}>{fmtH(slot2.hours)}</div>
+                              </div>
+                            );
+                          })}
+                          {freelaFree > 0.1 && (
+                            <div style={{ height: 20, borderRadius: 5, background: "#fef3c7", border: "1px dashed #fcd34d", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <span style={{ fontSize: 8, color: "#d97706" }}>{fmtH(freelaFree)} livre</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Gantt */}
       {member && (
@@ -891,100 +1103,6 @@ export default function AgendaPage() {
               </div>
 
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Daily Agenda */}
-      {member && (
-        <div style={{ marginTop: 24 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-            📋 Agenda diária — {firstName(member.name)}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
-            {weekDays.map(day => {
-              const dk = formatLocalDate(day);
-              const daySlots = schedule.get(dk) ?? [];
-              const regSlots = daySlots.filter(s => s.pool === "regular");
-              const freelaSlots = daySlots.filter(s => s.pool === "freela");
-              const regUsed = regSlots.reduce((s, a) => s + a.hours, 0);
-              const freelaUsed = freelaSlots.reduce((s, a) => s + a.hours, 0);
-              const regFree = Math.max(0, cap.regular - regUsed);
-              const freelaFree = Math.max(0, cap.freela - freelaUsed);
-              const isT = sameDay(day, today);
-              const overloaded = regFree < 0.1 && (cap.freela === 0 || freelaFree < 0.1);
-
-              return (
-                <div key={dk} style={{ background: "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : "1px solid #eef0f3", overflow: "hidden" }}>
-                  {/* Day header */}
-                  <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isT ? "#f5f3ff" : "#fafafa" }}>
-                    <div>
-                      <span style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#111", marginLeft: 5 }}>{day.getDate()}/{day.getMonth() + 1}</span>
-                    </div>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
-                      {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
-                    </span>
-                  </div>
-
-                  {/* Regular pool */}
-                  <div style={{ padding: "6px 8px 4px" }}>
-                    {cap.freela > 0 && (
-                      <div style={{ fontSize: 9, color: "#6b7280", marginBottom: 5, fontWeight: 600 }}>
-                        👤 {firstName(member.name)} — {fmtH(cap.regular)}
-                      </div>
-                    )}
-                    {regSlots.map((slot, i) => {
-                      const color = projectColor(extractProject(slot.task.title));
-                      return (
-                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
-                          <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-                          <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={slot.task.title}>
-                            {slot.task.title.slice(0, 26)}{slot.task.title.length > 26 ? "…" : ""}
-                          </span>
-                          <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>{fmtH(slot.hours)}</span>
-                        </div>
-                      );
-                    })}
-                    {regFree > 0 && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e5e7eb", flexShrink: 0 }} />
-                        <span style={{ fontSize: 10, color: "#9ca3af", flex: 1 }}>LIVRE</span>
-                        <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtH(regFree)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Freela pool — Larissa only */}
-                  {cap.freela > 0 && (
-                    <div style={{ padding: "6px 8px 6px", borderTop: "1px dashed #e5e7eb" }}>
-                      <div style={{ fontSize: 9, color: "#ea580c", marginBottom: 5, fontWeight: 600 }}>
-                        🤝 Freela — {fmtH(cap.freela)}
-                      </div>
-                      {freelaSlots.map((slot, i) => {
-                        const color = projectColor(extractProject(slot.task.title));
-                        return (
-                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
-                            <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={slot.task.title}>
-                              {slot.task.title.slice(0, 26)}{slot.task.title.length > 26 ? "…" : ""}
-                            </span>
-                            <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>{fmtH(slot.hours)}</span>
-                          </div>
-                        );
-                      })}
-                      {freelaFree > 0 && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e5e7eb", flexShrink: 0 }} />
-                          <span style={{ fontSize: 10, color: "#9ca3af", flex: 1 }}>LIVRE</span>
-                          <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtH(freelaFree)}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
