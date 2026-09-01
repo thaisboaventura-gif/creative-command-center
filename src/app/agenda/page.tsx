@@ -357,6 +357,16 @@ export default function AgendaPage() {
   const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
   const [ganttTwoWeeks, setGanttTwoWeeks] = useState(false);
 
+  // ── Add-to-pipeline ──
+  interface FetchedTask { id: string; key: string; title: string; status: string; assignee: string; dueDate: string | null; estimatedHours: number; estimatedDetail: string; estimatedFromJira: boolean }
+  type AddFlow = null | "input" | "loading" | "confirm" | "error";
+  const [manualTasks, setManualTasks] = useState<TaskItem[]>(() => { try { return JSON.parse(localStorage.getItem("agenda_manual_tasks_v1") ?? "[]"); } catch { return []; } });
+  const [addFlow, setAddFlow]     = useState<AddFlow>(null);
+  const [addInput, setAddInput]   = useState("");
+  const [addFetched, setAddFetched] = useState<FetchedTask | null>(null);
+  const [addHours, setAddHours]   = useState("");
+  const [addError, setAddError]   = useState<string | null>(null);
+
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [taskOrders, setTaskOrders] = useState<Record<string, string[]>>({});
@@ -654,6 +664,60 @@ export default function AgendaPage() {
     }
   }
 
+  function addTaskToList(fetched: FetchedTask, hours: number) {
+    const task: TaskItem = {
+      id: "manual_" + fetched.key,
+      key: fetched.key,
+      title: fetched.title,
+      status: fetched.status,
+      priority: "medium",
+      assignee: fetched.assignee,
+      dueDate: fetched.dueDate,
+      estimatedHours: hours,
+      estimatedDetail: fetched.estimatedFromJira ? fetched.estimatedDetail : `${hours}h manual`,
+      createdAt: new Date().toISOString(),
+      flagged: false,
+    };
+    setManualTasks(prev => {
+      const next = [...prev.filter(t => t.key !== task.key), task];
+      try { localStorage.setItem("agenda_manual_tasks_v1", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    setAddFlow(null);
+    setAddInput("");
+    setAddFetched(null);
+    setAddError(null);
+  }
+
+  async function fetchAndAddTask(rawKey: string) {
+    const key = rawKey.trim().toUpperCase();
+    if (!key) return;
+    const alreadyInMember = member?.tasks.some(t => t.key === key);
+    const alreadyManual   = manualTasks.some(t => t.key === key);
+    if (alreadyInMember || alreadyManual) {
+      setAddError("Esta task já está no pipeline.");
+      setAddFlow("error");
+      return;
+    }
+    setAddFlow("loading");
+    setAddError(null);
+    try {
+      const res  = await fetch(`/api/jira/fetch-issue?key=${encodeURIComponent(key)}`);
+      const data = await res.json();
+      if (!res.ok) { setAddError(data.error ?? "Erro ao buscar task"); setAddFlow("error"); return; }
+      setAddFetched(data as FetchedTask);
+      setAddHours(String((data as FetchedTask).estimatedHours));
+      if ((data as FetchedTask).estimatedFromJira && (data as FetchedTask).dueDate) {
+        addTaskToList(data as FetchedTask, (data as FetchedTask).estimatedHours);
+      } else {
+        setAddFlow("confirm");
+      }
+    } catch {
+      setAddError("Erro de conexão. Tente novamente.");
+      setAddFlow("error");
+    }
+  }
+
   async function changeAssigneeInAgenda(taskKey: string, newAccountId: string | null, oldDisplayName: string) {
     const user = assignableUsers.find(u => u.accountId === newAccountId);
     const newDisplayName = user?.displayName ?? "";
@@ -719,16 +783,20 @@ export default function AgendaPage() {
   const cfg = member ? getConfig(member.name) : null;
   const areaC = cfg ? (AREA_COLORS[cfg.area] || "#6b7280") : "#6b7280";
 
-  const taskMap = member ? new Map(member.tasks.map(t => [t.key, t])) : new Map<string, TaskItem>();
-  const parentTasks = member ? member.tasks.filter(t => !t.parentKey || !taskMap.has(t.parentKey)) : [];
+  // Merge manual tasks for the current member (dedup by key)
+  const memberManualTasks = member
+    ? manualTasks.filter(t => t.assignee === member.name && !member.tasks.some(mt => mt.key === t.key))
+    : [];
+  const memberTasks = member ? [...member.tasks, ...memberManualTasks] : [];
+
+  const taskMap = new Map(memberTasks.map(t => [t.key, t]));
+  const parentTasks = memberTasks.filter(t => !t.parentKey || !taskMap.has(t.parentKey));
   const childMap = new Map<string, TaskItem[]>();
-  if (member) {
-    member.tasks.filter(t => t.parentKey && taskMap.has(t.parentKey)).forEach(t => {
-      const arr = childMap.get(t.parentKey!) ?? [];
-      arr.push(t);
-      childMap.set(t.parentKey!, arr);
-    });
-  }
+  memberTasks.filter(t => t.parentKey && taskMap.has(t.parentKey)).forEach(t => {
+    const arr = childMap.get(t.parentKey!) ?? [];
+    arr.push(t);
+    childMap.set(t.parentKey!, arr);
+  });
 
   function effectiveDue(t: TaskItem): Date | null {
     const subs = childMap.get(t.key) ?? [];
@@ -746,13 +814,13 @@ export default function AgendaPage() {
     ? [...customOrder.map(id => sortedByDeadline.find(t => t.id === id)).filter(Boolean) as TaskItem[], ...sortedByDeadline.filter(t => !customOrder.includes(t.id))]
     : sortedByDeadline;
 
-  const backlog = member ? member.tasks.filter(t => !t.dueDate && t.status !== "done").length : 0;
+  const backlog = memberTasks.filter(t => !t.dueDate && t.status !== "done").length;
 
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
   const weekDays = days.slice(0, 5); // always 5 days — used only for at-risk cutoff
   const calDays  = ganttTwoWeeks ? days : weekDays; // drives CalendarView + buildSchedule
   const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(member.tasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions)
+    ? buildSchedule(memberTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
@@ -883,14 +951,76 @@ export default function AgendaPage() {
         const COL_H = 300;
         return (
           <div style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#374151" }}>🗓 Agenda diária — {firstName(member.name)}</span>
-              <button
-                onClick={() => setGanttTwoWeeks(v => !v)}
-                style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${ganttTwoWeeks ? "#7c3aed" : "#e5e7eb"}`, background: ganttTwoWeeks ? "#ede9fe" : "white", color: ganttTwoWeeks ? "#7c3aed" : "#374151", cursor: "pointer", transition: "all 0.15s", flexShrink: 0 }}>
-                {ganttTwoWeeks ? "📅 1 semana" : "📅 2 semanas"}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {/* Add task input */}
+                {addFlow === "input" || addFlow === "error" || addFlow === "loading" ? (
+                  <form onSubmit={e => { e.preventDefault(); fetchAndAddTask(addInput); }} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <input
+                      autoFocus
+                      value={addInput}
+                      onChange={e => { setAddInput(e.target.value); setAddError(null); }}
+                      placeholder="BDSL-12345"
+                      style={{ width: 110, fontSize: 11, padding: "4px 8px", borderRadius: 8, border: `1.5px solid ${addFlow === "error" ? "#ef4444" : "#e5e7eb"}`, outline: "none" }}
+                    />
+                    {addFlow === "loading"
+                      ? <span style={{ fontSize: 11, color: "#9ca3af" }}>…</span>
+                      : <button type="submit" style={{ fontSize: 11, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1.5px solid #7c3aed", background: "#ede9fe", color: "#7c3aed", cursor: "pointer" }}>Buscar</button>
+                    }
+                    <button type="button" onClick={() => { setAddFlow(null); setAddInput(""); setAddError(null); }} style={{ fontSize: 11, padding: "4px 6px", borderRadius: 8, border: "1px solid #e5e7eb", background: "white", color: "#9ca3af", cursor: "pointer" }}>✕</button>
+                    {addFlow === "error" && addError && (
+                      <span style={{ fontSize: 10, color: "#ef4444", maxWidth: 140 }}>{addError}</span>
+                    )}
+                  </form>
+                ) : (
+                  <button onClick={() => setAddFlow("input")} style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, border: "1.5px solid #e5e7eb", background: "white", color: "#374151", cursor: "pointer", transition: "all 0.15s" }}>
+                    + task
+                  </button>
+                )}
+                <button
+                  onClick={() => setGanttTwoWeeks(v => !v)}
+                  style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${ganttTwoWeeks ? "#7c3aed" : "#e5e7eb"}`, background: ganttTwoWeeks ? "#ede9fe" : "white", color: ganttTwoWeeks ? "#7c3aed" : "#374151", cursor: "pointer", transition: "all 0.15s", flexShrink: 0 }}>
+                  {ganttTwoWeeks ? "📅 1 semana" : "📅 2 semanas"}
+                </button>
+              </div>
             </div>
+            {/* Confirm / missing-fields mini-modal */}
+            {addFlow === "confirm" && addFetched && (
+              <div style={{ marginBottom: 12, padding: "12px 14px", background: "#f5f3ff", border: "1.5px solid #c4b5fd", borderRadius: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#5b21b6" }}>Confirmar adição ao pipeline</div>
+                <div style={{ fontSize: 11, color: "#374151" }}><b>{addFetched.key}</b> — {addFetched.title}</div>
+                {addFetched.assignee && <div style={{ fontSize: 10, color: "#7c3aed" }}>👤 {addFetched.assignee}</div>}
+                {addFetched.dueDate && <div style={{ fontSize: 10, color: "#7c3aed" }}>📅 {addFetched.dueDate}</div>}
+                {!addFetched.dueDate && <div style={{ fontSize: 10, color: "#dc2626" }}>⚠️ Esta task não tem deadline definido no Jira. Adicione o prazo lá antes de incluir.</div>}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, color: "#374151" }}>
+                    {addFetched.estimatedFromJira ? "Horas (Jira):" : "Horas estimadas* :"}
+                  </span>
+                  <input
+                    type="number" min="0.5" step="0.5"
+                    value={addHours}
+                    onChange={e => setAddHours(e.target.value)}
+                    style={{ width: 60, fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #c4b5fd", textAlign: "right" }}
+                  />
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>h</span>
+                  {!addFetched.estimatedFromJira && <span style={{ fontSize: 9, color: "#9ca3af" }}>* estimado por título</span>}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                  <button
+                    onClick={() => { const h = parseFloat(addHours); if (!isNaN(h) && h > 0) addTaskToList(addFetched, h); }}
+                    disabled={!addFetched.dueDate}
+                    style={{ fontSize: 11, fontWeight: 600, padding: "5px 14px", borderRadius: 8, border: "none", background: addFetched.dueDate ? "#7c3aed" : "#e5e7eb", color: addFetched.dueDate ? "white" : "#9ca3af", cursor: addFetched.dueDate ? "pointer" : "not-allowed" }}>
+                    Adicionar
+                  </button>
+                  <button
+                    onClick={() => { setAddFlow(null); setAddFetched(null); setAddInput(""); }}
+                    style={{ fontSize: 11, padding: "5px 10px", borderRadius: 8, border: "1px solid #c4b5fd", background: "white", color: "#7c3aed", cursor: "pointer" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${calDays.length}, minmax(${ganttTwoWeeks ? 140 : 0}px, 1fr))`, gap: 8, overflowX: "auto" }}>
               {calDays.map((day, dayIdx) => {
                 const dk = formatLocalDate(day);
