@@ -207,28 +207,59 @@ function getDailyCap(name: string): { regular: number; freela: number } {
 
 interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela" }
 
+interface ScheduleResult { slots: Map<string, DaySlot[]>; unplaced: Array<{ task: TaskItem; hours: number }> }
+
+function normalizeStatus(raw: string): string {
+  const l = raw.toLowerCase();
+  if (l === "done" || l.includes("done") || l.includes("conclu") || l.includes("finaliz") ||
+      l.includes("entregue") || l.includes("resolv") || l.includes("closed") ||
+      l.includes("encerr") || l.includes("complet")) return "done";
+  if (l === "in_review" || l.includes("review") || l.includes("revis") ||
+      l.includes("waiting") || l.includes("aguard") || l.includes("feedback") ||
+      l.includes("approval") || l.includes("aprova")) return "in_review";
+  if (l.includes("progress") || l.includes("andamento") || l.includes("doing") ||
+      l.includes("sendo")) return "in_progress";
+  return "to_do";
+}
+
 function buildSchedule(
   tasks: TaskItem[],
   days: Date[],
   cap: { regular: number; freela: number },
   hoursOverrides: Record<string, number> = {},
   dayPins: Record<string, string> = {},
-): Map<string, DaySlot[]> {
+  dayExclusions: Record<string, string[]> = {},
+): ScheduleResult {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
   const slots = new Map<string, DaySlot[]>(days.map(d => [formatLocalDate(d), []]));
+  const unplaced: Array<{ task: TaskItem; hours: number }> = [];
 
   const active = tasks
-    .filter(t => t.status !== "done" && (hoursOverrides[t.id] ?? t.estimatedHours) > 0 && t.dueDate)
+    .filter(t => {
+      const norm = normalizeStatus(t.status);
+      return norm !== "done" &&
+        norm !== "in_review" &&
+        !t.flagged &&
+        (hoursOverrides[t.id] ?? t.estimatedHours) > 0 &&
+        t.dueDate;
+    })
     .sort((a, b) => parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime());
 
   for (const task of active) {
     let rem = hoursOverrides[task.id] ?? task.estimatedHours;
     const deadline = parseLocalDate(task.dueDate!);
     const pinKey = dayPins[task.id];
+    const excluded = new Set(dayExclusions[task.id] ?? []);
     const eligible = pinKey
-      ? days.filter(d => formatLocalDate(d) === pinKey)
-      : days.filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; });
+      ? days.filter(d => {
+          const dk = formatLocalDate(d);
+          return dk === pinKey && !excluded.has(dk);
+        })
+      : days.filter(d => {
+          const dm = new Date(d); dm.setHours(0, 0, 0, 0);
+          return dm >= today && dm <= deadline && !excluded.has(formatLocalDate(d));
+        });
 
     for (const d of eligible) {
       if (rem <= 0) break;
@@ -244,8 +275,10 @@ function buildSchedule(
         slots.get(key)!.push({ task, hours: h, pool: "freela" });
       }
     }
+
+    if (rem > 0.01) unplaced.push({ task, hours: rem });
   }
-  return slots;
+  return { slots, unplaced };
 }
 
 function fmtH(h: number): string {
@@ -282,6 +315,9 @@ export default function AgendaPage() {
   const [editingBlock,   setEditingBlock]    = useState<{ taskId: string; hours: number } | null>(null);
   const [calDragKey,     setCalDragKey]      = useState<string | null>(null);
   const [calDropDay,     setCalDropDay]      = useState<string | null>(null);
+  const [dayExclusions,  setDayExclusions]   = useState<Record<string, string[]>>({});
+  const [openAssigneeKey, setOpenAssigneeKey] = useState<string | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
 
   const [startOverrides, setStartOverrides] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -332,6 +368,22 @@ export default function AgendaPage() {
   useEffect(() => { loadJira(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    fetch("/api/jira/assignable-users")
+      .then(r => r.json())
+      .then(d => { if (d.users?.length) setAssignableUsers(d.users); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!openAssigneeKey) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-assignee-pill]")) setOpenAssigneeKey(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [openAssigneeKey]);
+
+  useEffect(() => {
     const saved: Record<string, number> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
@@ -361,6 +413,7 @@ export default function AgendaPage() {
 
     const hours: Record<string, number> = {};
     const pins:  Record<string, string> = {};
+    const excls: Record<string, string[]> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
       if (k.startsWith("agenda_hours_")) {
@@ -371,9 +424,16 @@ export default function AgendaPage() {
         const v = localStorage.getItem(k)!;
         if (v) pins[k.slice("agenda_day_".length)] = v;
       }
+      if (k.startsWith("agenda_excl_")) {
+        try {
+          const v = JSON.parse(localStorage.getItem(k)!);
+          if (Array.isArray(v)) excls[k.slice("agenda_excl_".length)] = v;
+        } catch {}
+      }
     }
     if (Object.keys(hours).length > 0) setHoursOverrides(hours);
     if (Object.keys(pins).length > 0)  setDayPins(pins);
+    if (Object.keys(excls).length > 0) setDayExclusions(excls);
   }, []);
 
   // Label resize
@@ -555,6 +615,45 @@ export default function AgendaPage() {
     }
   }
 
+  async function changeAssigneeInAgenda(taskKey: string, newAccountId: string | null, oldDisplayName: string) {
+    const user = assignableUsers.find(u => u.accountId === newAccountId);
+    const newDisplayName = user?.displayName ?? "";
+    setTeam(prev => prev.map(m => ({
+      ...m,
+      tasks: m.tasks.map(t => t.key === taskKey ? { ...t, assignee: newDisplayName } : t),
+    })));
+    try {
+      const res = await fetch("/api/jira/assignee", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey: taskKey, accountId: newAccountId }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      setTeam(prev => prev.map(m => ({
+        ...m,
+        tasks: m.tasks.map(t => t.key === taskKey ? { ...t, assignee: oldDisplayName } : t),
+      })));
+    }
+  }
+
+  function removeFromDay(taskId: string, dayKey: string) {
+    setDayExclusions(prev => {
+      const existing = prev[taskId] ?? [];
+      if (existing.includes(dayKey)) return prev;
+      const next = { ...prev, [taskId]: [...existing, dayKey] };
+      try { localStorage.setItem(`agenda_excl_${taskId}`, JSON.stringify(next[taskId])); } catch {}
+      return next;
+    });
+    setDayPins(prev => {
+      if (prev[taskId] !== dayKey) return prev;
+      const next = { ...prev };
+      delete next[taskId];
+      try { localStorage.removeItem(`agenda_day_${taskId}`); } catch {}
+      return next;
+    });
+  }
+
   function sortTeam(t: MemberItem[]) {
     return [...t].sort((a, b) => {
       const ka = firstName(a.name).toLowerCase();
@@ -610,7 +709,9 @@ export default function AgendaPage() {
 
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
   const weekDays = days.slice(0, 5);
-  const schedule = member ? buildSchedule(member.tasks, weekDays, cap, hoursOverrides, dayPins) : new Map<string, DaySlot[]>();
+  const { slots: schedule, unplaced: unplacedTasks } = member
+    ? buildSchedule(member.tasks, weekDays, cap, hoursOverrides, dayPins, dayExclusions)
+    : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
     <Shell>
@@ -805,18 +906,48 @@ export default function AgendaPage() {
                             title={slot.task.title}
                             style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "grab", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
-                            <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3 }}>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
                               {isPinned && <span style={{ fontSize: 8, marginRight: 2 }}>📌</span>}
                               {isEdited && <span style={{ fontSize: 8, marginRight: 2 }}>✏️</span>}
                               {slot.task.title}
                             </div>
-                            {blockH > 56 && (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                                <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: chip.bg, color: chip.color, whiteSpace: "nowrap", overflow: "hidden", maxWidth: "72%" }}>{chip.label}</span>
-                                {due && <span style={{ fontSize: 8, color: "#9ca3af", flexShrink: 0 }}>{due.getDate()}/{due.getMonth() + 1}</span>}
-                              </div>
-                            )}
-                            <span style={{ position: "absolute", bottom: 3, right: 5, fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700, pointerEvents: "none" }}>{fmtH(slot.hours)}</span>
+                            {blockH > 56 && (() => {
+                              const ACCENT = areaC;
+                              const isDropOpen = openAssigneeKey === slot.task.id;
+                              const curUser = assignableUsers.find(u => u.displayName === slot.task.assignee);
+                              const pillLabel = curUser ? curUser.firstName : (slot.task.assignee ? slot.task.assignee.split(/[\s.]/)[0] : "—");
+                              return (
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 4 }}>
+                                  <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: chip.bg, color: chip.color, whiteSpace: "nowrap", overflow: "hidden", maxWidth: "50%" }}>{chip.label}</span>
+                                  <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : slot.task.id); }}
+                                      style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? ACCENT : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? ACCENT : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                      {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
+                                    </button>
+                                    {isDropOpen && (
+                                      <div style={{ position: "absolute", bottom: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
+                                        <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(slot.task.key, null, slot.task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
+                                        {assignableUsers.map(u => (
+                                          <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(slot.task.key, u.accountId, slot.task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${ACCENT}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? ACCENT : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0, gap: 1 }}>
+                                    <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(slot.hours)}</span>
+                                    {due && <span style={{ fontSize: 8, color: "#9ca3af" }}>{due.getDate()}/{due.getMonth() + 1}</span>}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                            <button
+                              onClick={e => { e.stopPropagation(); removeFromDay(slot.task.id, dk); }}
+                              title="Remover deste dia"
+                              style={{ position: "absolute", top: 2, right: 2, width: 14, height: 14, borderRadius: 3, border: "none", background: hexToRgba(color, 0.25), color: "#374151", fontSize: 8, fontWeight: 700, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, opacity: 0.7, transition: "opacity 0.1s" }}
+                              onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
+                              onMouseLeave={e => (e.currentTarget.style.opacity = "0.7")}
+                            >✕</button>
                           </div>
                         );
                       })}
@@ -857,6 +988,41 @@ export default function AgendaPage() {
                 );
               })}
             </div>
+
+            {/* Não encaixado */}
+            {unplacedTasks.length > 0 && (
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#c2410c", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                  ⚠️ Não encaixado nesta semana ({unplacedTasks.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {unplacedTasks.map(({ task, hours }) => {
+                    const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
+                    const color = projectColor(extractProject(task.title));
+                    return (
+                      <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: "white", borderRadius: 7, border: `1px solid ${hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${color}` }}>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
+                        <span style={{ fontSize: 9, color: "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
+                        {due && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
+                        <button
+                          onClick={() => {
+                            setDayExclusions(prev => {
+                              const next = { ...prev };
+                              delete next[task.id];
+                              try { localStorage.removeItem(`agenda_excl_${task.id}`); } catch {}
+                              return next;
+                            });
+                          }}
+                          title="Limpar exclusões e reencaixar"
+                          style={{ fontSize: 9, padding: "2px 6px", borderRadius: 5, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", cursor: "pointer", flexShrink: 0, fontWeight: 600 }}>
+                          ↩ reencaixar
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
