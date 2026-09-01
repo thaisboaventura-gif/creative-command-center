@@ -907,8 +907,6 @@ export default function AgendaPage() {
                             style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "grab", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
                             <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
-                              {isPinned && <span style={{ fontSize: 8, marginRight: 2 }}>📌</span>}
-                              {isEdited && <span style={{ fontSize: 8, marginRight: 2 }}>✏️</span>}
                               {slot.task.title}
                             </div>
                             {blockH > 56 && (() => {
@@ -990,39 +988,71 @@ export default function AgendaPage() {
             </div>
 
             {/* Não encaixado */}
-            {unplacedTasks.length > 0 && (
-              <div style={{ marginTop: 10, padding: "10px 12px", background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#c2410c", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                  ⚠️ Não encaixado nesta semana ({unplacedTasks.length})
+            {unplacedTasks.length > 0 && (() => {
+              const weekEnd = weekDays[weekDays.length - 1];
+              const sorted = [...unplacedTasks].sort((a, b) => {
+                const da = a.task.dueDate ? parseLocalDate(a.task.dueDate).getTime() : Infinity;
+                const db = b.task.dueDate ? parseLocalDate(b.task.dueDate).getTime() : Infinity;
+                return da - db;
+              });
+              const atRisk = sorted.filter(({ task }) => {
+                if (!task.dueDate) return false;
+                const due = parseLocalDate(task.dueDate); due.setHours(0, 0, 0, 0);
+                const we = new Date(weekEnd); we.setHours(0, 0, 0, 0);
+                return due <= we;
+              });
+              const future = sorted.filter(({ task }) => {
+                if (!task.dueDate) return true;
+                const due = parseLocalDate(task.dueDate); due.setHours(0, 0, 0, 0);
+                const we = new Date(weekEnd); we.setHours(0, 0, 0, 0);
+                return due > we;
+              });
+
+              const renderRow = ({ task, hours }: { task: TaskItem; hours: number }, isRisk: boolean) => {
+                const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
+                const color = projectColor(extractProject(task.title));
+                return (
+                  <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}` }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
+                    <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
+                    {due && <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
+                    <button
+                      onClick={() => {
+                        setDayExclusions(prev => {
+                          const next = { ...prev };
+                          delete next[task.id];
+                          try { localStorage.removeItem(`agenda_excl_${task.id}`); } catch {}
+                          return next;
+                        });
+                      }}
+                      title="Limpar exclusões e reencaixar"
+                      style={{ fontSize: 9, padding: "2px 6px", borderRadius: 5, border: `1px solid ${isRisk ? "#fca5a5" : "#fed7aa"}`, background: isRisk ? "#fff1f0" : "#fff7ed", color: isRisk ? "#dc2626" : "#c2410c", cursor: "pointer", flexShrink: 0, fontWeight: 600 }}>
+                      ↩ reencaixar
+                    </button>
+                  </div>
+                );
+              };
+
+              return (
+                <div style={{ marginTop: 10, padding: "10px 12px", background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#c2410c", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    ⚠️ Não encaixado nesta semana ({unplacedTasks.length})
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    {atRisk.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                          🚨 Não cabe no prazo desta semana
+                        </div>
+                        {atRisk.map(item => renderRow(item, true))}
+                        {future.length > 0 && <div style={{ height: 1, background: "#fed7aa", margin: "4px 0" }} />}
+                      </>
+                    )}
+                    {future.map(item => renderRow(item, false))}
+                  </div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                  {unplacedTasks.map(({ task, hours }) => {
-                    const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
-                    const color = projectColor(extractProject(task.title));
-                    return (
-                      <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: "white", borderRadius: 7, border: `1px solid ${hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${color}` }}>
-                        <span style={{ fontSize: 10, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
-                        <span style={{ fontSize: 9, color: "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
-                        {due && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
-                        <button
-                          onClick={() => {
-                            setDayExclusions(prev => {
-                              const next = { ...prev };
-                              delete next[task.id];
-                              try { localStorage.removeItem(`agenda_excl_${task.id}`); } catch {}
-                              return next;
-                            });
-                          }}
-                          title="Limpar exclusões e reencaixar"
-                          style={{ fontSize: 9, padding: "2px 6px", borderRadius: 5, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", cursor: "pointer", flexShrink: 0, fontWeight: 600 }}>
-                          ↩ reencaixar
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         );
       })()}
