@@ -714,7 +714,7 @@ export default function AgendaPage() {
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
   const weekDays = days.slice(0, 5);
   const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(member.tasks, weekDays, cap, hoursOverrides, dayPins, dayExclusions)
+    ? buildSchedule(member.tasks.filter(t => !childMap.has(t.key)), weekDays, cap, hoursOverrides, dayPins, dayExclusions)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
