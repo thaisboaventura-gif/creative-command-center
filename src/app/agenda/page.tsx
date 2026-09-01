@@ -228,9 +228,7 @@ function buildSchedule(
     const pinKey = dayPins[task.id];
     const eligible = pinKey
       ? days.filter(d => formatLocalDate(d) === pinKey)
-      : days
-          .filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; })
-          .slice().reverse();
+      : days.filter(d => { const dm = new Date(d); dm.setHours(0, 0, 0, 0); return dm >= today && dm <= deadline; });
 
     for (const d of eligible) {
       if (rem <= 0) break;
