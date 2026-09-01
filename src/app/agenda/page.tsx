@@ -1011,10 +1011,29 @@ export default function AgendaPage() {
               const renderRow = ({ task, hours }: { task: TaskItem; hours: number }, isRisk: boolean) => {
                 const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
                 const color = projectColor(extractProject(task.title));
+                const upKey = "up-" + task.key;
+                const isDropOpen = openAssigneeKey === upKey;
+                const curUser = assignableUsers.find(u => u.displayName === task.assignee);
+                const pillLabel = curUser ? curUser.firstName : (task.assignee ? task.assignee.split(/[\s.]/)[0] : "—");
                 return (
                   <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}` }}>
                     <span style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
                     <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
+                    <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : upKey); }}
+                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
+                      </button>
+                      {isDropOpen && (
+                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
+                          <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(task.key, null, task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
+                          {assignableUsers.map(u => (
+                            <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(task.key, u.accountId, task.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     {due && <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
                     <button
                       onClick={() => {
@@ -1173,10 +1192,29 @@ export default function AgendaPage() {
                             const parentDue = parent.dueDate ? parseLocalDate(parent.dueDate) : null;
                             const parentOverdue = parentDue !== null && parentDue < todayMidnight && parent.status !== "done" && parent.status !== "in_review";
                             const chip = statusChipProps(parent.status, parentOverdue);
+                            const gpKey = "gp-" + parent.key;
+                            const isDropOpen = openAssigneeKey === gpKey;
+                            const curUser = assignableUsers.find(u => u.displayName === parent.assignee);
+                            const pillLabel = curUser ? curUser.firstName : (parent.assignee ? parent.assignee.split(/[\s.]/)[0] : "—");
                             return (
                               <>
                                 {!parentBar && parentDue && parentOverdue && <span style={{ fontSize: 9, color: "#991b1b", flexShrink: 0, whiteSpace: "nowrap" }}>📅 {parentDue.getDate()}/{parentDue.getMonth() + 1}</span>}
                                 <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 20, background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>{chip.label}</span>
+                                <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                  <button
+                                    onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : gpKey); }}
+                                    style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
+                                  </button>
+                                  {isDropOpen && (
+                                    <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
+                                      <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(parent.key, null, parent.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
+                                      {assignableUsers.map(u => (
+                                        <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(parent.key, u.accountId, parent.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </>
                             );
                           })()}
@@ -1247,10 +1285,29 @@ export default function AgendaPage() {
                                 const subDue2 = sub.dueDate ? parseLocalDate(sub.dueDate) : null;
                                 const subOverdue2 = subDue2 !== null && subDue2 < todayMidnight && sub.status !== "done" && sub.status !== "in_review";
                                 const chip = statusChipProps(sub.status, subOverdue2);
+                                const gsKey = "gs-" + sub.key;
+                                const isDropOpen = openAssigneeKey === gsKey;
+                                const curUser = assignableUsers.find(u => u.displayName === sub.assignee);
+                                const pillLabel = curUser ? curUser.firstName : (sub.assignee ? sub.assignee.split(/[\s.]/)[0] : "—");
                                 return (
                                   <>
                                     {!subBar && subDue2 && subOverdue2 && <span style={{ fontSize: 9, color: "#991b1b", flexShrink: 0, whiteSpace: "nowrap" }}>📅 {subDue2.getDate()}/{subDue2.getMonth() + 1}</span>}
                                     <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 20, background: chip.bg, color: chip.color, whiteSpace: "nowrap", flexShrink: 0 }}>{chip.label}</span>
+                                    <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isDropOpen ? null : gsKey); }}
+                                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${isDropOpen ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                        {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
+                                      </button>
+                                      {isDropOpen && (
+                                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 300, minWidth: 110, overflow: "hidden" }}>
+                                          <button onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(sub.key, null, sub.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
+                                          {assignableUsers.map(u => (
+                                            <button key={u.accountId} onClick={e => { e.stopPropagation(); changeAssigneeInAgenda(sub.key, u.accountId, sub.assignee); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: u.accountId === curUser?.accountId ? `${areaC}18` : "none", border: "none", cursor: "pointer", color: u.accountId === curUser?.accountId ? areaC : "#374151", fontWeight: u.accountId === curUser?.accountId ? 600 : 400 }}>{u.firstName}</button>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
                                   </>
                                 );
                               })()}
