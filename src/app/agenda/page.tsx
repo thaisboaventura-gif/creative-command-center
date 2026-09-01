@@ -881,12 +881,18 @@ export default function AgendaPage() {
         const COL_H = 300;
         return (
           <div style={{ marginBottom: 24 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-              🗓 {ganttTwoWeeks ? "2 semanas" : "Semana"} — {firstName(member.name)}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#374151" }}>🗓 Agenda diária — {firstName(member.name)}</span>
+              <button
+                onClick={() => setGanttTwoWeeks(v => !v)}
+                style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${ganttTwoWeeks ? "#7c3aed" : "#e5e7eb"}`, background: ganttTwoWeeks ? "#ede9fe" : "white", color: ganttTwoWeeks ? "#7c3aed" : "#374151", cursor: "pointer", transition: "all 0.15s", flexShrink: 0 }}>
+                {ganttTwoWeeks ? "📅 1 semana" : "📅 2 semanas"}
+              </button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${calDays.length}, 1fr)`, gap: 8 }}>
-              {calDays.map(day => {
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${calDays.length}, minmax(${ganttTwoWeeks ? 140 : 0}px, 1fr))`, gap: 8, overflowX: "auto" }}>
+              {calDays.map((day, dayIdx) => {
                 const dk = formatLocalDate(day);
+                const isWeekBreak = ganttTwoWeeks && dayIdx === 4; // thick right border after Fri wk1
                 const daySlots = schedule.get(dk) ?? [];
                 const regSlots = daySlots.filter(s => s.pool === "regular");
                 const freelaSlots = daySlots.filter(s => s.pool === "freela");
@@ -911,7 +917,7 @@ export default function AgendaPage() {
                       }
                       setCalDragKey(null); setCalDropDay(null);
                     }}
-                    style={{ background: isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s" }}
+                    style={{ background: isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s", boxShadow: isWeekBreak ? "6px 0 0 0 #d1d5db" : undefined }}
                   >
                     {/* Day header */}
                     <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
