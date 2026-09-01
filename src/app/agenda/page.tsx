@@ -205,7 +205,7 @@ function getDailyCap(name: string): { regular: number; freela: number } {
   return map[k] ?? { regular: 6.5, freela: 0 };
 }
 
-interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela" }
+interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela"; continuation?: boolean }
 
 interface ScheduleResult { slots: Map<string, DaySlot[]>; unplaced: Array<{ task: TaskItem; hours: number }> }
 
@@ -244,35 +244,70 @@ function buildSchedule(
         (hoursOverrides[t.id] ?? t.estimatedHours) > 0 &&
         t.dueDate;
     })
-    .sort((a, b) => parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime());
+    // in_progress tasks first (continuation priority), then by deadline
+    .sort((a, b) => {
+      const aN = normalizeStatus(a.status) === "in_progress" ? 0 : 1;
+      const bN = normalizeStatus(b.status) === "in_progress" ? 0 : 1;
+      if (aN !== bN) return aN - bN;
+      return parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime();
+    });
 
   for (const task of active) {
     let rem = hoursOverrides[task.id] ?? task.estimatedHours;
     const deadline = parseLocalDate(task.dueDate!);
     const pinKey = dayPins[task.id];
     const excluded = new Set(dayExclusions[task.id] ?? []);
-    const eligible = pinKey
-      ? days.filter(d => {
-          const dk = formatLocalDate(d);
-          return dk === pinKey && !excluded.has(dk);
-        })
-      : days.filter(d => {
-          const dm = new Date(d); dm.setHours(0, 0, 0, 0);
-          return dm >= today && dm <= deadline && !excluded.has(formatLocalDate(d));
-        });
 
-    for (const d of eligible) {
-      if (rem <= 0) break;
-      const key = formatLocalDate(d);
-      const l = load.get(key)!;
+    const eligibleSet = new Set<string>(
+      pinKey
+        ? days.filter(d => {
+            const dk = formatLocalDate(d);
+            return dk === pinKey && !excluded.has(dk);
+          }).map(d => formatLocalDate(d))
+        : days.filter(d => {
+            const dm = new Date(d); dm.setHours(0, 0, 0, 0);
+            return dm >= today && dm <= deadline && !excluded.has(formatLocalDate(d));
+          }).map(d => formatLocalDate(d))
+    );
+
+    // forceIdx: after a partial allocation, force the remainder to this days[] index
+    let forceIdx: number | null = null;
+    let isContinuation = false;
+
+    for (let di = 0; di < days.length && rem > 0.01; di++) {
+      const dk = formatLocalDate(days[di]);
+      const isForced = forceIdx !== null && di === forceIdx;
+      if (!isForced && !eligibleSet.has(dk)) continue;
+      if (isForced) forceIdx = null;
+
+      const l = load.get(dk);
+      if (!l) continue;
+
       const rAvail = Math.max(0, cap.regular - l.r);
       const fAvail = Math.max(0, cap.freela - l.f);
+
+      let allocated = false;
       if (rAvail > 0) {
-        const h = Math.min(rem, rAvail); l.r += h; rem -= h;
-        slots.get(key)!.push({ task, hours: h, pool: "regular" });
+        const h = Math.min(rem, rAvail);
+        l.r += h; rem -= h;
+        slots.get(dk)!.push({ task, hours: h, pool: "regular", continuation: isContinuation || undefined });
+        allocated = true;
       } else if (fAvail > 0) {
-        const h = Math.min(rem, fAvail); l.f += h; rem -= h;
-        slots.get(key)!.push({ task, hours: h, pool: "freela" });
+        const h = Math.min(rem, fAvail);
+        l.f += h; rem -= h;
+        slots.get(dk)!.push({ task, hours: h, pool: "freela", continuation: isContinuation || undefined });
+        allocated = true;
+      } else if (isForced) {
+        // Day is full — in-progress continuation takes priority, force-allocate over cap
+        const h = Math.min(rem, cap.regular);
+        l.r += h; rem -= h;
+        slots.get(dk)!.push({ task, hours: h, pool: "regular", continuation: true });
+        allocated = true;
+      }
+
+      if (allocated && rem > 0.01) {
+        forceIdx = di + 1;
+        isContinuation = true;
       }
     }
 
@@ -911,7 +946,7 @@ export default function AgendaPage() {
                             style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "pointer", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
                             <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
-                              {slot.task.title}
+                              {slot.continuation && <span style={{ fontSize: 8, fontWeight: 700, color: "#9ca3af", marginRight: 3 }}>↪</span>}{slot.task.title}
                             </div>
                             {blockH > 56 && (() => {
                               const ACCENT = areaC;
@@ -937,7 +972,7 @@ export default function AgendaPage() {
                                     )}
                                   </div>
                                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0, gap: 1 }}>
-                                    <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(slot.hours)}</span>
+                                    <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(slot.hours)}{slot.continuation ? <span style={{ fontWeight: 400, color: "#9ca3af" }}> (cont.)</span> : null}</span>
                                     {due && <span style={{ fontSize: 8, color: "#9ca3af" }}>{due.getDate()}/{due.getMonth() + 1}</span>}
                                   </div>
                                 </div>
