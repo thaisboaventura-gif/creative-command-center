@@ -351,7 +351,8 @@ export default function D2CEventoDashboard() {
   const [barDragState,        setBarDragState]        = useState<BarDragState | null>(null);
   const [barDragOffset,       setBarDragOffset]       = useState(0);
   const [commentedKeys,       setCommentedKeys]       = useState<Set<string>>(new Set());
-  const [taskOrder,     setTaskOrder]     = useState<string[]>([]);
+  const [taskOrder,        setTaskOrder]        = useState<string[]>([]);
+  const [openAssigneeKey,  setOpenAssigneeKey]  = useState<string | null>(null);
   interface VertDrag { taskKey: string; fromIdx: number; }
   const [vertDrag,  setVertDrag]  = useState<VertDrag | null>(null);
   const [dropIdx,   setDropIdx]   = useState<number | null>(null);
@@ -564,6 +565,15 @@ export default function D2CEventoDashboard() {
   function showTooltip(data: TooltipState) { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); setTooltip(data); }
   function hideTooltip() { tooltipTimer.current = setTimeout(() => setTooltip(null), 160); }
   function cancelHide() { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); }
+
+  useEffect(() => {
+    if (!openAssigneeKey) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-assignee-pill]")) setOpenAssigneeKey(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [openAssigneeKey]);
 
   /* ── Bar drag ── */
   useEffect(() => {
@@ -852,16 +862,31 @@ export default function D2CEventoDashboard() {
           <span title={task.title} style={{ fontSize: indent ? 11 : 12, color: "#374151", fontWeight: isParent ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {task.title}
           </span>
-          <select
-            title="Responsável"
-            value={TEAM_MEMBERS.find(m => m.displayName === ((task as PerfTask).assignee || (task as PerfSubtask).assignee))?.accountId ?? ""}
-            onChange={e => { e.stopPropagation(); changeAssignee(taskKey, e.target.value || null, (task as PerfTask).assignee || (task as PerfSubtask).assignee || ""); }}
-            onClick={e => e.stopPropagation()}
-            style={{ fontSize: 10, color: "#6b7280", background: "transparent", border: "none", cursor: "pointer", flexShrink: 0, maxWidth: 72, padding: 0, outline: "none" }}
-          >
-            <option value="">—</option>
-            {TEAM_MEMBERS.map(m => <option key={m.accountId} value={m.accountId}>{m.firstName}</option>)}
-          </select>
+          {(() => {
+            const assigneeName = (task as PerfTask).assignee || (task as PerfSubtask).assignee || "";
+            const member = TEAM_MEMBERS.find(m => m.displayName === assigneeName);
+            const label  = member?.firstName ?? "—";
+            const isOpen = openAssigneeKey === taskKey;
+            const ACCENT = "#9333ea";
+            return (
+              <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }}>
+                <button
+                  onClick={e => { e.stopPropagation(); setOpenAssigneeKey(isOpen ? null : taskKey); }}
+                  style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 6px 2px 8px", background: "#fff", border: `1px solid ${isOpen ? ACCENT : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 10, fontWeight: 500, color: member ? ACCENT : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s, background 0.15s", whiteSpace: "nowrap" }}
+                >
+                  {label}<span style={{ fontSize: 8, opacity: 0.6 }}>▾</span>
+                </button>
+                {isOpen && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.13)", zIndex: 200, minWidth: 110, overflow: "hidden" }}>
+                    <button onClick={e => { e.stopPropagation(); changeAssignee(taskKey, null, assigneeName); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: "none", border: "none", borderBottom: "1px solid #f3f4f6", cursor: "pointer", color: "#9ca3af" }}>— Sem responsável</button>
+                    {TEAM_MEMBERS.map(m => (
+                      <button key={m.accountId} onClick={e => { e.stopPropagation(); changeAssignee(taskKey, m.accountId, assigneeName); setOpenAssigneeKey(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 12px", fontSize: 11, background: m.accountId === member?.accountId ? `${ACCENT}18` : "none", border: "none", cursor: "pointer", color: m.accountId === member?.accountId ? ACCENT : "#374151", fontWeight: m.accountId === member?.accountId ? 600 : 400 }}>{m.firstName}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <button
             onClick={e => { e.stopPropagation(); toggleFlag(taskKey, !!((task as PerfTask).flagged || (task as PerfSubtask).flagged)); }}
             title={(task as PerfTask).flagged || (task as PerfSubtask).flagged ? "Remover marcação" : "Marcar task"}
