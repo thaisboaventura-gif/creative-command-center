@@ -747,9 +747,10 @@ export default function AgendaPage() {
   const backlog = member ? member.tasks.filter(t => !t.dueDate && t.status !== "done").length : 0;
 
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
-  const weekDays = days.slice(0, 5);
+  const weekDays = days.slice(0, 5); // always 5 days — used only for at-risk cutoff
+  const calDays  = ganttTwoWeeks ? days : weekDays; // drives CalendarView + buildSchedule
   const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(member.tasks.filter(t => !childMap.has(t.key)), weekDays, cap, hoursOverrides, dayPins, dayExclusions)
+    ? buildSchedule(member.tasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
 
   return (
@@ -881,10 +882,10 @@ export default function AgendaPage() {
         return (
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-              🗓 Semana — {firstName(member.name)}
+              🗓 {ganttTwoWeeks ? "2 semanas" : "Semana"} — {firstName(member.name)}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-              {weekDays.map(day => {
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${calDays.length}, 1fr)`, gap: 8 }}>
+              {calDays.map(day => {
                 const dk = formatLocalDate(day);
                 const daySlots = schedule.get(dk) ?? [];
                 const regSlots = daySlots.filter(s => s.pool === "regular");
