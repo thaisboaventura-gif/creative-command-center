@@ -60,6 +60,19 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function getHorizonDays(from: Date, weeks: number): Date[] {
+  const result: Date[] = [];
+  const cur = new Date(from);
+  cur.setHours(0, 0, 0, 0);
+  const target = weeks * 5;
+  while (result.length < target) {
+    const day = cur.getDay();
+    if (day !== 0 && day !== 6) result.push(new Date(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return result;
+}
+
 function getTwoWeekDays(offset: number): Date[] {
   const now = new Date();
   const mon = new Date(now);
@@ -240,13 +253,9 @@ function buildSchedule(
   const active = tasks
     .filter(t => {
       const norm = normalizeStatus(t.status);
-      return norm !== "done" &&
-        norm !== "in_review" &&
-        !t.flagged &&
-        (hoursOverrides[t.id] ?? t.estimatedHours) > 0 &&
-        t.dueDate;
+      return norm !== "done" && norm !== "in_review" && !t.flagged &&
+        (hoursOverrides[t.id] ?? t.estimatedHours) > 0 && t.dueDate;
     })
-    // in_progress tasks first (continuation priority), then by deadline
     .sort((a, b) => {
       const aN = normalizeStatus(a.status) === "in_progress" ? 0 : 1;
       const bN = normalizeStatus(b.status) === "in_progress" ? 0 : 1;
@@ -259,60 +268,44 @@ function buildSchedule(
     const deadline = parseLocalDate(task.dueDate!);
     const pinKey = dayPins[task.id];
     const excluded = new Set(dayExclusions[task.id] ?? []);
+    const isInProgress = normalizeStatus(task.status) === "in_progress";
 
-    const eligibleSet = new Set<string>(
-      pinKey
-        ? days.filter(d => {
-            const dk = formatLocalDate(d);
-            return dk === pinKey && !excluded.has(dk);
-          }).map(d => formatLocalDate(d))
-        : days.filter(d => {
+    // Compute eligible days (forward order, will reverse for to_do)
+    const eligibleDks = pinKey
+      ? days
+          .filter(d => formatLocalDate(d) === pinKey && !excluded.has(formatLocalDate(d)))
+          .map(d => formatLocalDate(d))
+      : days
+          .filter(d => {
             const dm = new Date(d); dm.setHours(0, 0, 0, 0);
-            return dm >= today && dm <= deadline && !excluded.has(formatLocalDate(d));
-          }).map(d => formatLocalDate(d))
-    );
+            const dk = formatLocalDate(d);
+            return dm >= today && dm <= deadline && !excluded.has(dk);
+          })
+          .map(d => formatLocalDate(d));
 
-    // forceIdx: after a partial allocation, force the remainder to this days[] index
-    let forceIdx: number | null = null;
+    // in_progress → earliest first (ASAP); to_do → latest first (near deadline)
+    const orderedDks = (!pinKey && !isInProgress) ? [...eligibleDks].reverse() : eligibleDks;
+
     let isContinuation = false;
-
-    for (let di = 0; di < days.length && rem > 0.01; di++) {
-      const dk = formatLocalDate(days[di]);
-      const isForced = forceIdx !== null && di === forceIdx;
-      if (blockedDays.has(dk)) {
-        if (isForced) forceIdx = di + 1; // propagate force past blocked day
-        continue;
-      }
-      if (!isForced && !eligibleSet.has(dk)) continue;
-      if (isForced) forceIdx = null;
-
+    for (const dk of orderedDks) {
+      if (rem <= 0.01) break;
+      if (blockedDays.has(dk)) continue;
       const l = load.get(dk);
-      if (!l) continue;
+      const s = slots.get(dk);
+      if (!l || !s) continue;
 
       const rAvail = Math.max(0, cap.regular - l.r);
       const fAvail = Math.max(0, cap.freela - l.f);
 
-      let allocated = false;
       if (rAvail > 0) {
         const h = Math.min(rem, rAvail);
         l.r += h; rem -= h;
-        slots.get(dk)!.push({ task, hours: h, pool: "regular", continuation: isContinuation || undefined });
-        allocated = true;
+        s.push({ task, hours: h, pool: "regular", continuation: isContinuation || undefined });
+        isContinuation = true;
       } else if (fAvail > 0) {
         const h = Math.min(rem, fAvail);
         l.f += h; rem -= h;
-        slots.get(dk)!.push({ task, hours: h, pool: "freela", continuation: isContinuation || undefined });
-        allocated = true;
-      } else if (isForced) {
-        // Day is full — in-progress continuation takes priority, force-allocate over cap
-        const h = Math.min(rem, cap.regular);
-        l.r += h; rem -= h;
-        slots.get(dk)!.push({ task, hours: h, pool: "regular", continuation: true });
-        allocated = true;
-      }
-
-      if (allocated && rem > 0.01) {
-        forceIdx = di + 1;
+        s.push({ task, hours: h, pool: "freela", continuation: isContinuation || undefined });
         isContinuation = true;
       }
     }
@@ -707,13 +700,18 @@ export default function AgendaPage() {
     }
   }
 
-  function forceTaskVisible(taskId: string) {
+  function addToForcedSet(taskId: string) {
     setForcedTasks(prev => {
+      if (prev.has(taskId)) return prev;
       const next = new Set(prev);
       next.add(taskId);
       try { localStorage.setItem("agenda_forced_v1", JSON.stringify([...next])); } catch {}
       return next;
     });
+  }
+
+  function forceTaskVisible(taskId: string) {
+    addToForcedSet(taskId);
     setAddFlow(null);
     setAddInput("");
     setAddFetched(null);
@@ -908,15 +906,49 @@ export default function AgendaPage() {
   const backlog = memberTasks.filter(t => !t.dueDate && t.status !== "done").length;
 
   const cap = member ? getDailyCap(member.name) : { regular: 6.5, freela: 0 };
-  const weekDays = days.slice(0, 5); // always 5 days — used only for at-risk cutoff
-  const calDays  = ganttTwoWeeks ? days : weekDays; // drives CalendarView + buildSchedule
+  const weekDays = days.slice(0, 5);
+  const calDays  = ganttTwoWeeks ? days : weekDays;
   const memberAbsences = member ? (absences[member.name] ?? new Set<string>()) : new Set<string>();
   const blockedDays    = new Set<string>([...holidays, ...memberAbsences]);
-  // Tasks overridden by forceTaskVisible: treat as unflagged so they enter the schedule
   const scheduleTasks = memberTasks.map(t => forcedTasks.has(t.id) ? { ...t, flagged: false } : t);
-  const { slots: schedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(scheduleTasks.filter(t => !childMap.has(t.key)), calDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
+
+  // Full 6-week horizon so tasks placed in earlier weeks don't re-appear as unplaced when navigating
+  const horizonDays = getHorizonDays(todayMidnight, 6);
+  const { slots: fullSchedule, unplaced: unplacedTasks } = member
+    ? buildSchedule(scheduleTasks.filter(t => !childMap.has(t.key)), horizonDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
+
+  // Filter the full-horizon schedule down to only the visible calDays for CalendarView display
+  const schedule = new Map<string, DaySlot[]>(
+    calDays.map(d => { const dk = formatLocalDate(d); return [dk, fullSchedule.get(dk) ?? []]; })
+  );
+
+  // Flagged tasks (not forced): excluded from buildSchedule — include in unplaced tables
+  const unplacedFlagged = member
+    ? memberTasks
+        .filter(t => t.flagged && !forcedTasks.has(t.id) && !childMap.has(t.key))
+        .filter(t => { const n = normalizeStatus(t.status); return n !== "done" && n !== "in_review" && !!t.dueDate; })
+        .map(t => ({ task: t, hours: hoursOverrides[t.id] ?? t.estimatedHours }))
+    : [];
+  const allUnplaced = [...unplacedTasks, ...unplacedFlagged]
+    .sort((a, b) => {
+      const da = a.task.dueDate ? parseLocalDate(a.task.dueDate).getTime() : Infinity;
+      const db = b.task.dueDate ? parseLocalDate(b.task.dueDate).getTime() : Infinity;
+      return da - db;
+    });
+  const calEndMs  = new Date(calDays[calDays.length - 1]).setHours(23, 59, 59, 0);
+  const fourWksMs = new Date(todayMidnight).setDate(todayMidnight.getDate() + 28);
+  // Table 1: past deadline OR deadline within visible calendar range
+  const unplacedInRange = allUnplaced.filter(({ task }) => {
+    if (!task.dueDate) return false;
+    return parseLocalDate(task.dueDate).getTime() <= calEndMs;
+  });
+  // Table 2: beyond visible range but within 4 weeks from today
+  const unplacedFuture = allUnplaced.filter(({ task }) => {
+    if (!task.dueDate) return false;
+    const d = parseLocalDate(task.dueDate).getTime();
+    return d > calEndMs && d <= fourWksMs;
+  });
 
   return (
     <Shell>
@@ -1172,6 +1204,9 @@ export default function AgendaPage() {
                       if (calDragKey && !isDayBlocked) {
                         const key = calDragKey;
                         setDayPins(prev => { const next = { ...prev, [key]: dk }; try { localStorage.setItem(`agenda_day_${key}`, dk); } catch {} return next; });
+                        // Auto-force if task is flagged — user explicitly dragged it in
+                        const draggedTask = memberTasks.find(t => t.id === key);
+                        if (draggedTask?.flagged) addToForcedSet(key);
                       }
                       setCalDragKey(null); setCalDropDay(null);
                     }}
@@ -1311,38 +1346,52 @@ export default function AgendaPage() {
               })}
             </div>
 
-            {/* Não encaixado */}
-            {unplacedTasks.length > 0 && (() => {
-              const weekEnd = weekDays[weekDays.length - 1];
-              const sorted = [...unplacedTasks].sort((a, b) => {
-                const da = a.task.dueDate ? parseLocalDate(a.task.dueDate).getTime() : Infinity;
-                const db = b.task.dueDate ? parseLocalDate(b.task.dueDate).getTime() : Infinity;
-                return da - db;
-              });
-              const atRisk = sorted.filter(({ task }) => {
-                if (!task.dueDate) return false;
-                const due = parseLocalDate(task.dueDate); due.setHours(0, 0, 0, 0);
-                const we = new Date(weekEnd); we.setHours(0, 0, 0, 0);
-                return due <= we;
-              });
-              const future = sorted.filter(({ task }) => {
-                if (!task.dueDate) return true;
-                const due = parseLocalDate(task.dueDate); due.setHours(0, 0, 0, 0);
-                const we = new Date(weekEnd); we.setHours(0, 0, 0, 0);
-                return due > we;
-              });
-
-              const renderRow = ({ task, hours }: { task: TaskItem; hours: number }, isRisk: boolean) => {
+            {/* ── Tabelas "Não encaixado" ── */}
+            {(unplacedInRange.length > 0 || unplacedFuture.length > 0) && (() => {
+              const renderUnplacedRow = (task: TaskItem, hours: number, type: "urgent" | "future") => {
                 const due = task.dueDate ? parseLocalDate(task.dueDate) : null;
+                const isOverdue = due !== null && due.getTime() < todayMidnight.getTime();
                 const color = projectColor(extractProject(task.title));
                 const upKey = "up-" + task.key;
                 const curUser = assignableUsers.find(u => u.displayName === task.assignee);
                 const pillLabel = curUser ? curUser.firstName : (task.assignee ? task.assignee.split(/[\s.]/)[0] : "—");
+                const accentColor = type === "urgent" ? (isOverdue ? "#dc2626" : "#d97706") : color;
+                const dateColor = isOverdue ? "#dc2626" : type === "urgent" ? "#92400e" : "#374151";
+                const bgNormal = "white";
+                const bgHover = "#f9fafb";
                 return (
-                  <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: isRisk ? "#fff1f0" : "white", borderRadius: 7, border: `1px solid ${isRisk ? "#fca5a5" : hexToRgba(color, 0.3)}`, borderLeft: `3px solid ${isRisk ? "#ef4444" : color}` }}>
-                    <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, fontWeight: 600, color: isRisk ? "#991b1b" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{task.title}</a>
-                    <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#ea580c", fontWeight: 700, flexShrink: 0 }}>{fmtH(hours)}</span>
-                    <div data-assignee-pill="" style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                  <div
+                    key={task.id}
+                    draggable
+                    onDragStart={e => { e.stopPropagation(); setCalDragKey(task.id); }}
+                    onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: bgNormal, borderBottom: "1px solid #f3f4f6", borderLeft: `4px solid ${accentColor}`, cursor: "grab", transition: "background 0.1s" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = bgHover)}
+                    onMouseLeave={e => (e.currentTarget.style.background = bgNormal)}
+                  >
+                    {/* Drag handle */}
+                    <span style={{ fontSize: 14, color: "#d1d5db", flexShrink: 0, userSelect: "none", cursor: "grab" }}>⠿</span>
+                    {/* Task pill */}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: hexToRgba(color, 0.08), border: `1px solid ${hexToRgba(color, 0.25)}`, borderRadius: 8, padding: "5px 11px", flex: 1, minWidth: 0, overflow: "hidden" }}>
+                      {task.flagged && <span style={{ fontSize: 11, color: "#e53935", flexShrink: 0 }}>⚑</span>}
+                      <a href={`${JIRA}/${task.key}`} target="_blank" rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" }}
+                        onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")}
+                        onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>
+                        {task.title}
+                      </a>
+                    </div>
+                    {/* Hours */}
+                    <span style={{ fontSize: 13, fontWeight: 700, color: accentColor, flexShrink: 0 }}>{fmtH(hours)}</span>
+                    {/* Due date — prominent */}
+                    {due && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: dateColor, flexShrink: 0, whiteSpace: "nowrap" }}>
+                        Entrega: {due.getDate()}/{due.getMonth() + 1}{isOverdue ? " ⚠️" : ""}
+                      </span>
+                    )}
+                    {/* Assignee pill */}
+                    <div data-assignee-pill="" style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                       <button
                         onClick={e => {
                           e.stopPropagation();
@@ -1350,46 +1399,42 @@ export default function AgendaPage() {
                           const rect = e.currentTarget.getBoundingClientRect();
                           setOpenPill({ key: upKey, taskKey: task.key, currentAssignee: task.assignee, accent: areaC, rect });
                         }}
-                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === upKey ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? areaC : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
+                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "3px 8px 3px 10px", background: "#fff", border: `1px solid ${openPill?.key === upKey ? areaC : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.07)", cursor: "pointer", fontSize: 10, fontWeight: 500, color: curUser ? areaC : "#9ca3af", transition: "border-color 0.15s", whiteSpace: "nowrap" }}>
+                        {pillLabel}<span style={{ fontSize: 8, opacity: 0.5, marginLeft: 2 }}>▾</span>
                       </button>
                     </div>
-                    {due && <span style={{ fontSize: 9, color: isRisk ? "#dc2626" : "#9ca3af", flexShrink: 0 }}>📅 {due.getDate()}/{due.getMonth() + 1}</span>}
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        setDayExclusions(prev => {
-                          const next = { ...prev };
-                          delete next[task.id];
-                          try { localStorage.removeItem(`agenda_excl_${task.id}`); } catch {}
-                          return next;
-                        });
-                      }}
-                      title="Limpar exclusões e reencaixar"
-                      style={{ fontSize: 9, padding: "2px 6px", borderRadius: 5, border: `1px solid ${isRisk ? "#fca5a5" : "#fed7aa"}`, background: isRisk ? "#fff1f0" : "#fff7ed", color: isRisk ? "#dc2626" : "#c2410c", cursor: "pointer", flexShrink: 0, fontWeight: 600 }}>
-                      ↩ reencaixar
-                    </button>
                   </div>
                 );
               };
 
               return (
-                <div style={{ marginTop: 10, padding: "10px 12px", background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#c2410c", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                    ⚠️ Não encaixado nesta semana ({unplacedTasks.length})
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                    {atRisk.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
-                          🚨 Não cabe no prazo desta semana
-                        </div>
-                        {atRisk.map(item => renderRow(item, true))}
-                        {future.length > 0 && <div style={{ height: 1, background: "#fed7aa", margin: "4px 0" }} />}
-                      </>
-                    )}
-                    {future.map(item => renderRow(item, false))}
-                  </div>
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* Tabela 1: dentro do prazo / em atraso */}
+                  {unplacedInRange.length > 0 && (
+                    <div style={{ background: "white", borderRadius: 12, border: "1.5px solid #fca5a5", overflow: "hidden", boxShadow: "0 2px 12px rgba(239,68,68,0.08)" }}>
+                      <div style={{ padding: "12px 16px 10px", background: "linear-gradient(to right, #fff1f0, #fff7f7)", borderBottom: "1px solid #fecaca", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#dc2626" }}>⚠️ Não encaixados dentro do prazo</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, background: "#fee2e2", color: "#b91c1c", borderRadius: 99, padding: "2px 10px", border: "1px solid #fecaca" }}>{unplacedInRange.length}</span>
+                        <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto", fontStyle: "italic" }}>arraste para um dia →</span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        {unplacedInRange.map(({ task, hours }) => renderUnplacedRow(task, hours, "urgent"))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Tabela 2: fora da semana, até 4 semanas */}
+                  {unplacedFuture.length > 0 && (
+                    <div style={{ background: "white", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
+                      <div style={{ padding: "12px 16px 10px", background: "linear-gradient(to right, #f9fafb, #fff)", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#374151" }}>📋 Tasks não encaixadas</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, background: "#f3f4f6", color: "#6b7280", borderRadius: 99, padding: "2px 10px", border: "1px solid #e5e7eb" }}>{unplacedFuture.length}</span>
+                        <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto", fontStyle: "italic" }}>prazo fora da janela · próx. 4 semanas</span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        {unplacedFuture.map(({ task, hours }) => renderUnplacedRow(task, hours, "future"))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
