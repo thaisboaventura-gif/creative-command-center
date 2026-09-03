@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Fixed creative team — accountIds from CONTEXT.md
+// Fixed creative team — accountIds from CONTEXT.md (primary match)
 const TEAM_ACCOUNT_IDS = new Set([
   "712020:4648823a-0cdc-4178-b186-597098121542", // Eduardo Oliveira
   "61aa13d5c75da800721a2623",                     // Eduardo Gasparetto
@@ -13,9 +13,19 @@ const TEAM_ACCOUNT_IDS = new Set([
   "712020:e2200010-bf69-4f6e-87a4-a792c42d8837", // Rafaela Ceragioli (Monstra)
 ]);
 
-// Members without a confirmed Jira accountId yet — matched by display name fragment
-// Gabriel Cassino: sem Jira ainda (CONTEXT.md)
-const TEAM_NAME_FRAGMENTS = ["gabriel", "cassino", "diego"];
+// Unique last-name fragments as fallback — catches everyone if accountId changes or is wrong
+// Using last names (more unique) to avoid false positives
+const TEAM_NAME_FRAGMENTS = [
+  "oliveira",   // Eduardo Oliveira
+  "gasparetto", // Eduardo Gasparetto
+  "cassino",    // Gabriel Cassino
+  "delarue",    // Larissa Delarue
+  "fernandes",  // Francisco Fernandes
+  "camargo",    // João Camargo
+  "pusso",      // Beatriz Pusso
+  "ceragioli",  // Rafaela Ceragioli
+  "diego",      // Diego
+];
 
 function isTeamMember(u: { accountId: string; displayName: string }): boolean {
   if (TEAM_ACCOUNT_IDS.has(u.accountId)) return true;
@@ -48,8 +58,14 @@ export async function GET() {
 
     const data = await res.json() as Array<{ accountId: string; displayName: string; active?: boolean }>;
 
+    const seen = new Set<string>();
     const users = data
       .filter(u => u.active !== false && isTeamMember(u))
+      .filter(u => {
+        if (seen.has(u.accountId)) return false;
+        seen.add(u.accountId);
+        return true;
+      })
       .map(u => ({
         accountId: u.accountId,
         displayName: u.displayName,

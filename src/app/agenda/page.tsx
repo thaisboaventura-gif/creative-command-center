@@ -270,21 +270,43 @@ function buildSchedule(
     const excluded = new Set(dayExclusions[task.id] ?? []);
     const isInProgress = normalizeStatus(task.status) === "in_progress";
 
-    // Compute eligible days (forward order, will reverse for to_do)
-    const eligibleDks = pinKey
-      ? days
-          .filter(d => formatLocalDate(d) === pinKey && !excluded.has(formatLocalDate(d)))
-          .map(d => formatLocalDate(d))
-      : days
-          .filter(d => {
-            const dm = new Date(d); dm.setHours(0, 0, 0, 0);
-            const dk = formatLocalDate(d);
-            return dm >= today && dm <= deadline && !excluded.has(dk);
-          })
-          .map(d => formatLocalDate(d));
+    let orderedDks: string[];
 
-    // in_progress → earliest first (ASAP); to_do → latest first (near deadline)
-    const orderedDks = (!pinKey && !isInProgress) ? [...eligibleDks].reverse() : eligibleDks;
+    if (pinKey) {
+      // Pinned: start from pin day, continue forward for overflow
+      const pinIdx = days.findIndex(d => formatLocalDate(d) === pinKey && !excluded.has(formatLocalDate(d)));
+      orderedDks = pinIdx >= 0
+        ? days.slice(pinIdx).map(d => formatLocalDate(d)).filter(dk => !excluded.has(dk))
+        : [];
+    } else if (isInProgress) {
+      // ASAP: forward from today through deadline
+      orderedDks = days
+        .filter(d => {
+          const dm = new Date(d); dm.setHours(0, 0, 0, 0);
+          const dk = formatLocalDate(d);
+          return dm >= today && dm <= deadline && !excluded.has(dk);
+        })
+        .map(d => formatLocalDate(d));
+    } else {
+      // Near-deadline: scan backward to find latest eligible day with any capacity,
+      // then allocate FORWARD from there so splits go to the next calendar day
+      const eligibleFwd = days
+        .filter(d => {
+          const dm = new Date(d); dm.setHours(0, 0, 0, 0);
+          const dk = formatLocalDate(d);
+          return dm >= today && dm <= deadline && !excluded.has(dk) && !blockedDays.has(dk);
+        })
+        .map(d => formatLocalDate(d));
+      const latestStart = [...eligibleFwd].reverse().find(dk => {
+        const l = load.get(dk);
+        return !!l && (cap.regular - l.r > 0.01 || cap.freela - l.f > 0.01);
+      });
+      if (!latestStart) { unplaced.push({ task, hours: rem }); continue; }
+      const startIdx = days.findIndex(d => formatLocalDate(d) === latestStart);
+      orderedDks = startIdx >= 0
+        ? days.slice(startIdx).map(d => formatLocalDate(d)).filter(dk => !excluded.has(dk))
+        : eligibleFwd;
+    }
 
     let isContinuation = false;
     for (const dk of orderedDks) {
