@@ -42,6 +42,18 @@ function isBrasil(fields: Record<string, unknown>): boolean {
   return str.includes("brasil") || str.includes("brazil");
 }
 
+function normalizeText(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+// Matches parent title OR any subtask stub title — robust to accent/case variation
+function matchesLancamentos(i: RawIssue): boolean {
+  const parent = normalizeText((i.fields.summary as string) ?? "");
+  if (parent.includes("lancamentos")) return true;
+  const subs = (i.fields.subtasks as Array<{ fields?: { summary?: string } }>) ?? [];
+  return subs.some((s) => normalizeText(s.fields?.summary ?? "").includes("lancamentos"));
+}
+
 interface RawIssue {
   key: string;
   fields: Record<string, unknown>;
@@ -140,11 +152,9 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // Active parent tasks with "Lançamentos" in title
-    const jql1 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
-
-    // Done parent tasks with "Lançamentos" in title this year
-    const jql2 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // JQL: use unaccented root "lancamento" so Jira's text index finds all accent variants
+    const jql1 = `project = ${project} AND summary ~ "lancamento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    const jql2 = `project = ${project} AND summary ~ "lancamento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),
@@ -157,7 +167,8 @@ export async function GET(req: Request) {
       ...raw2.filter((i) => !seen.has(i.key)),
     ];
 
-    const filtered = raw.filter((i) => isBrasil(i.fields));
+    // Code-level title filter: normalize accents + lowercase, check parent and subtask stubs
+    const filtered = raw.filter((i) => matchesLancamentos(i) && isBrasil(i.fields));
 
     const tasks: PerfTask[] = await Promise.all(
       filtered.map(async (issue) => {
@@ -176,7 +187,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       tasks,
-      meta: { total: raw.length, brasil: filtered.length },
+      meta: { total_jql: raw.length, total_title_match: filtered.length, tasks: tasks.length },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

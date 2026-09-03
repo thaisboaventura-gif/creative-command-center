@@ -43,6 +43,18 @@ function isBrasil(fields: Record<string, unknown>): boolean {
   return str.includes("brasil") || str.includes("brazil");
 }
 
+function normalizeText(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+// Matches parent title OR any subtask stub title — robust to accent/case variation
+function matchesD2CEvento(i: RawIssue): boolean {
+  const parent = normalizeText((i.fields.summary as string) ?? "");
+  if (parent.includes("d2c evento")) return true;
+  const subs = (i.fields.subtasks as Array<{ fields?: { summary?: string } }>) ?? [];
+  return subs.some((s) => normalizeText(s.fields?.summary ?? "").includes("d2c evento"));
+}
+
 interface RawIssue {
   key: string;
   fields: Record<string, unknown>;
@@ -142,11 +154,10 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // Active parent tasks with "D2C evento" in the title
-    const jql1 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
-
-    // Done parent tasks with "D2C evento" this year
-    const jql2 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // JQL: use "evento" without accent dependence — "D2C" number tokenisation is unreliable;
+    // broad superset, title match is done precisely in code below
+    const jql1 = `project = ${project} AND summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    const jql2 = `project = ${project} AND summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),
@@ -160,8 +171,8 @@ export async function GET(req: Request) {
       ...raw2.filter((i) => !seen.has(i.key)),
     ];
 
-    // Filter by Country = Brasil
-    const filtered = raw.filter((i) => isBrasil(i.fields));
+    // Code-level title filter: normalize accents + lowercase, check parent and subtask stubs
+    const filtered = raw.filter((i) => matchesD2CEvento(i) && isBrasil(i.fields));
 
     // Fetch subtasks for each task
     const tasks: PerfTask[] = await Promise.all(
@@ -181,7 +192,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       tasks,
-      meta: { total: raw.length, brasil: filtered.length },
+      meta: { total_jql: raw.length, total_title_match: filtered.length, tasks: tasks.length },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
