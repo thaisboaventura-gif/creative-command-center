@@ -152,9 +152,10 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // JQL: use unaccented root "lancamento" so Jira's text index finds all accent variants
-    const jql1 = `project = ${project} AND summary ~ "lancamento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
-    const jql2 = `project = ${project} AND summary ~ "lancamento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // JQL: Jira's ~ is accent/case-insensitive, so "Lançamentos" already catches all accent
+    // variants ("lancamentos", "Lançamentos", etc.). Use plural to match real titles.
+    const jql1 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    const jql2 = `project = ${project} AND summary ~ "Lançamentos" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),

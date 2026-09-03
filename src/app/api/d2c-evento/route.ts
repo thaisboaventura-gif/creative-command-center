@@ -47,12 +47,17 @@ function normalizeText(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-// Matches parent title OR any subtask stub title — robust to accent/case variation
+// Matches parent title OR any subtask stub title.
+// Uses token AND (not substring) to mirror Jira's ~ behaviour: both "d2c" and "evento"
+// must appear anywhere in the title, not necessarily adjacent.
 function matchesD2CEvento(i: RawIssue): boolean {
-  const parent = normalizeText((i.fields.summary as string) ?? "");
-  if (parent.includes("d2c evento")) return true;
+  const has = (s: string) => {
+    const n = normalizeText(s);
+    return n.includes("d2c") && n.includes("evento");
+  };
+  if (has((i.fields.summary as string) ?? "")) return true;
   const subs = (i.fields.subtasks as Array<{ fields?: { summary?: string } }>) ?? [];
-  return subs.some((s) => normalizeText(s.fields?.summary ?? "").includes("d2c evento"));
+  return subs.some((s) => has(s.fields?.summary ?? ""));
 }
 
 interface RawIssue {
@@ -154,10 +159,10 @@ export async function GET(req: Request) {
 
     const currentYear = new Date().getFullYear();
 
-    // JQL: use "evento" without accent dependence — "D2C" number tokenisation is unreliable;
-    // broad superset, title match is done precisely in code below
-    const jql1 = `project = ${project} AND summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
-    const jql2 = `project = ${project} AND summary ~ "evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
+    // JQL: restore original terms that were working. Jira's ~ is accent/case-insensitive
+    // and treats multi-word values as individual tokens with AND (both must appear anywhere).
+    const jql1 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    const jql2 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([
       fetchIssues(base, auth, jql1),
