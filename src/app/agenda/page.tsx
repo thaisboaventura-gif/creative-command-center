@@ -245,7 +245,6 @@ function buildSchedule(
   dayExclusions: Record<string, string[]> = {},
   blockedDays: Set<string> = new Set(),
 ): ScheduleResult {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
   const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
   const slots = new Map<string, DaySlot[]>(days.map(d => [formatLocalDate(d), []]));
   const unplaced: Array<{ task: TaskItem; hours: number }> = [];
@@ -270,7 +269,8 @@ function buildSchedule(
     const excluded = new Set(dayExclusions[task.id] ?? []);
     const isInProgress = normalizeStatus(task.status) === "in_progress";
 
-    // Compute eligible days (forward order, will reverse for to_do)
+    // Eligible days: no lower-bound cutoff at "today" — the horizon window determines
+    // the range, so tasks on past days stay visible when navigating backward
     const eligibleDks = pinKey
       ? days
           .filter(d => formatLocalDate(d) === pinKey && !excluded.has(formatLocalDate(d)))
@@ -279,7 +279,7 @@ function buildSchedule(
           .filter(d => {
             const dm = new Date(d); dm.setHours(0, 0, 0, 0);
             const dk = formatLocalDate(d);
-            return dm >= today && dm <= deadline && !excluded.has(dk);
+            return dm <= deadline && !excluded.has(dk);
           })
           .map(d => formatLocalDate(d));
 
@@ -912,8 +912,13 @@ export default function AgendaPage() {
   const blockedDays    = new Set<string>([...holidays, ...memberAbsences]);
   const scheduleTasks = memberTasks.map(t => forcedTasks.has(t.id) ? { ...t, flagged: false } : t);
 
-  // Full 6-week horizon so tasks placed in earlier weeks don't re-appear as unplaced when navigating
-  const horizonDays = getHorizonDays(todayMidnight, 6);
+  // Horizon: start 4 weeks before this week's Monday so navigating back shows past allocations.
+  // No lower-bound cutoff in buildSchedule, so tasks with past deadlines appear on past days.
+  const weekMonday = new Date(todayMidnight);
+  weekMonday.setDate(weekMonday.getDate() - ((weekMonday.getDay() + 6) % 7));
+  const horizonStart = new Date(weekMonday);
+  horizonStart.setDate(horizonStart.getDate() - 28); // 4 weeks back
+  const horizonDays = getHorizonDays(horizonStart, 12); // 12 weeks total (~4 back + 8 forward)
   const { slots: fullSchedule, unplaced: unplacedTasks } = member
     ? buildSchedule(scheduleTasks.filter(t => !childMap.has(t.key)), horizonDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
     : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
@@ -1191,17 +1196,18 @@ export default function AgendaPage() {
                 const regFree  = Math.max(0, cap.regular - regUsed);
                 const freelaFree = Math.max(0, cap.freela - freelaUsed);
                 const isT = sameDay(day, today);
+                const isPast = !isT && day.getTime() < todayMidnight.getTime();
                 const isDropTarget = calDropDay === dk;
                 const overloaded = regFree < 0.1 && (cap.freela === 0 || freelaFree < 0.1);
 
                 return (
                   <div
                     key={dk}
-                    onDragOver={e => { if (!isDayBlocked) { e.preventDefault(); setCalDropDay(dk); } }}
+                    onDragOver={e => { if (!isDayBlocked && !isPast) { e.preventDefault(); setCalDropDay(dk); } }}
                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCalDropDay(null); }}
                     onDrop={e => {
                       e.preventDefault();
-                      if (calDragKey && !isDayBlocked) {
+                      if (calDragKey && !isDayBlocked && !isPast) {
                         const key = calDragKey;
                         setDayPins(prev => { const next = { ...prev, [key]: dk }; try { localStorage.setItem(`agenda_day_${key}`, dk); } catch {} return next; });
                         // Auto-force if task is flagged — user explicitly dragged it in
@@ -1210,14 +1216,14 @@ export default function AgendaPage() {
                       }
                       setCalDragKey(null); setCalDropDay(null);
                     }}
-                    style={{ background: isDayBlocked ? "#f3f4f6" : isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isDayBlocked ? "1px solid #d1d5db" : isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s", boxShadow: isWeekBreak ? "6px 0 0 0 #d1d5db" : undefined }}
+                    style={{ background: isDayBlocked ? "#f3f4f6" : isPast ? "#f7f7f8" : isDropTarget ? "#f5f3ff" : "white", borderRadius: 10, border: isDayBlocked ? "1px solid #d1d5db" : isPast ? "1px solid #e8e9eb" : isT ? "1.5px solid #c4b5fd" : isDropTarget ? "1.5px solid #7c3aed" : "1px solid #eef0f3", overflow: "hidden", transition: "border-color 0.12s, background 0.12s", boxShadow: isWeekBreak ? "6px 0 0 0 #d1d5db" : undefined, opacity: isPast ? 0.8 : 1 }}
                   >
                     {/* Day header */}
-                    <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isDayBlocked ? "#e9ecef" : isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
+                    <div style={{ padding: "8px 10px", borderBottom: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "center", background: isDayBlocked ? "#e9ecef" : isPast ? "#f2f2f4" : isT || isDropTarget ? "#f5f3ff" : "#fafafa" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                         <div>
-                          <span style={{ fontSize: 9, color: isDayBlocked ? "#adb5bd" : "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: isDayBlocked ? "#9ca3af" : "#111", marginLeft: 5, textDecoration: isDayBlocked ? "line-through" : "none" }}>{day.getDate()}/{day.getMonth() + 1}</span>
+                          <span style={{ fontSize: 9, color: isDayBlocked ? "#adb5bd" : isPast ? "#b0b3b8" : "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>{dayLabel(day)}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: isDayBlocked ? "#9ca3af" : isPast ? "#9ca3af" : "#111", marginLeft: 5, textDecoration: isDayBlocked ? "line-through" : "none" }}>{day.getDate()}/{day.getMonth() + 1}</span>
                         </div>
                         {isDayBlocked && (
                           <span style={{ fontSize: 9, fontWeight: 700, color: isHoliday ? "#059669" : "#dc2626", fontStyle: "italic", whiteSpace: "nowrap" }}>
@@ -1232,7 +1238,7 @@ export default function AgendaPage() {
                           {isDayBlocked ? "✕" : "+"}
                         </button>
                       </div>
-                      {!isDayBlocked && (
+                      {!isDayBlocked && !isPast && (
                         <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
                           {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
                         </span>
