@@ -161,7 +161,7 @@ export async function GET(req: Request) {
 
     // JQL: restore original terms that were working. Jira's ~ is accent/case-insensitive
     // and treats multi-word values as individual tokens with AND (both must appear anywhere).
-    const jql1 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done AND status != Backlog ORDER BY updated DESC`;
+    const jql1 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory != Done ORDER BY updated DESC`;
     const jql2 = `project = ${project} AND summary ~ "D2C evento" AND issuetype not in subTaskIssueTypes() AND statusCategory = Done AND created >= "${currentYear}-01-01" ORDER BY updated DESC`;
 
     const [raw1, raw2] = await Promise.all([

@@ -223,6 +223,13 @@ interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela"; c
 
 interface ScheduleResult { slots: Map<string, DaySlot[]>; unplaced: Array<{ task: TaskItem; hours: number }> }
 
+interface Placement {
+  id: string;
+  taskId: string;
+  dayKey: string;
+  hours: number;
+}
+
 function normalizeStatus(raw: string): string {
   const l = raw.toLowerCase();
   if (l === "done" || l.includes("done") || l.includes("conclu") || l.includes("finaliz") ||
@@ -344,12 +351,10 @@ export default function AgendaPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
-  const [hoursOverrides, setHoursOverrides] = useState<Record<string, number>>({});
-  const [dayPins,        setDayPins]         = useState<Record<string, string>>({});
-  const [editingBlock,   setEditingBlock]    = useState<{ taskId: string; hours: number } | null>(null);
+  const [placements,     setPlacements]      = useState<Placement[]>([]);
+  const [editingBlock,   setEditingBlock]    = useState<{ placementId: string; hours: number } | null>(null);
   const [calDragKey,     setCalDragKey]      = useState<string | null>(null);
   const [calDropDay,     setCalDropDay]      = useState<string | null>(null);
-  const [dayExclusions,  setDayExclusions]   = useState<Record<string, string[]>>({});
   interface PillPortal { key: string; taskKey: string; currentAssignee: string; accent: string; rect: DOMRect }
   const [openPill, setOpenPill] = useState<PillPortal | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<Array<{ accountId: string; displayName: string; firstName: string }>>([]);
@@ -475,29 +480,36 @@ export default function AgendaPage() {
     const savedW = parseInt(localStorage.getItem(LABEL_W_KEY) ?? "");
     if (!isNaN(savedW) && savedW >= 120) setLabelWidth(savedW);
 
-    const hours: Record<string, number> = {};
-    const pins:  Record<string, string> = {};
-    const excls: Record<string, string[]> = {};
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)!;
-      if (k.startsWith("agenda_hours_")) {
-        const v = parseFloat(localStorage.getItem(k)!);
-        if (!isNaN(v)) hours[k.slice("agenda_hours_".length)] = v;
+    const savedPlacements = localStorage.getItem("agenda_placements_v2");
+    if (savedPlacements) {
+      try {
+        const arr = JSON.parse(savedPlacements);
+        if (Array.isArray(arr)) setPlacements(arr);
+      } catch {}
+    } else {
+      // Migrate from old per-task pin/hours keys
+      const oldHours: Record<string, number> = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)!;
+        if (k.startsWith("agenda_hours_")) {
+          const v = parseFloat(localStorage.getItem(k)!);
+          if (!isNaN(v)) oldHours[k.slice("agenda_hours_".length)] = v;
+        }
       }
-      if (k.startsWith("agenda_day_")) {
-        const v = localStorage.getItem(k)!;
-        if (v) pins[k.slice("agenda_day_".length)] = v;
+      const migrated: Placement[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)!;
+        if (k.startsWith("agenda_day_")) {
+          const taskId = k.slice("agenda_day_".length);
+          const dayKey = localStorage.getItem(k)!;
+          if (dayKey) migrated.push({ id: `${taskId}__${dayKey}__migrated`, taskId, dayKey, hours: oldHours[taskId] ?? 1 });
+        }
       }
-      if (k.startsWith("agenda_excl_")) {
-        try {
-          const v = JSON.parse(localStorage.getItem(k)!);
-          if (Array.isArray(v)) excls[k.slice("agenda_excl_".length)] = v;
-        } catch {}
+      if (migrated.length > 0) {
+        setPlacements(migrated);
+        try { localStorage.setItem("agenda_placements_v2", JSON.stringify(migrated)); } catch {}
       }
     }
-    if (Object.keys(hours).length > 0) setHoursOverrides(hours);
-    if (Object.keys(pins).length > 0)  setDayPins(pins);
-    if (Object.keys(excls).length > 0) setDayExclusions(excls);
 
     try {
       const rawF2 = localStorage.getItem("agenda_forced_v1");
@@ -810,19 +822,19 @@ export default function AgendaPage() {
     }
   }
 
-  function removeFromDay(taskId: string, dayKey: string) {
-    setDayExclusions(prev => {
-      const existing = prev[taskId] ?? [];
-      if (existing.includes(dayKey)) return prev;
-      const next = { ...prev, [taskId]: [...existing, dayKey] };
-      try { localStorage.setItem(`agenda_excl_${taskId}`, JSON.stringify(next[taskId])); } catch {}
+  function addPlacement(taskId: string, dayKey: string, hours: number) {
+    const placementId = `${taskId}__${dayKey}__${Date.now()}`;
+    setPlacements(prev => {
+      const next = [...prev, { id: placementId, taskId, dayKey, hours }];
+      try { localStorage.setItem("agenda_placements_v2", JSON.stringify(next)); } catch {}
       return next;
     });
-    setDayPins(prev => {
-      if (prev[taskId] !== dayKey) return prev;
-      const next = { ...prev };
-      delete next[taskId];
-      try { localStorage.removeItem(`agenda_day_${taskId}`); } catch {}
+  }
+
+  function removePlacement(placementId: string) {
+    setPlacements(prev => {
+      const next = prev.filter(p => p.id !== placementId);
+      try { localStorage.setItem("agenda_placements_v2", JSON.stringify(next)); } catch {}
       return next;
     });
   }
@@ -910,45 +922,47 @@ export default function AgendaPage() {
   const calDays  = ganttTwoWeeks ? days : weekDays;
   const memberAbsences = member ? (absences[member.name] ?? new Set<string>()) : new Set<string>();
   const blockedDays    = new Set<string>([...holidays, ...memberAbsences]);
-  const scheduleTasks = memberTasks.map(t => forcedTasks.has(t.id) ? { ...t, flagged: false } : t);
 
-  // Horizon: start 4 weeks before this week's Monday so navigating back shows past allocations.
-  // No lower-bound cutoff in buildSchedule, so tasks with past deadlines appear on past days.
-  const weekMonday = new Date(todayMidnight);
-  weekMonday.setDate(weekMonday.getDate() - ((weekMonday.getDay() + 6) % 7));
-  const horizonStart = new Date(weekMonday);
-  horizonStart.setDate(horizonStart.getDate() - 28); // 4 weeks back
-  const horizonDays = getHorizonDays(horizonStart, 12); // 12 weeks total (~4 back + 8 forward)
-  const { slots: fullSchedule, unplaced: unplacedTasks } = member
-    ? buildSchedule(scheduleTasks.filter(t => !childMap.has(t.key)), horizonDays, cap, hoursOverrides, dayPins, dayExclusions, blockedDays)
-    : { slots: new Map<string, DaySlot[]>(), unplaced: [] as Array<{ task: TaskItem; hours: number }> };
-
-  // Filter the full-horizon schedule down to only the visible calDays for CalendarView display
-  const schedule = new Map<string, DaySlot[]>(
-    calDays.map(d => { const dk = formatLocalDate(d); return [dk, fullSchedule.get(dk) ?? []]; })
+  // Placement-based schedule: map dayKey → list of {placement, task} for this member
+  const schedule = new Map<string, Array<{ placement: Placement; task: TaskItem }>>(
+    calDays.map(d => {
+      const dk = formatLocalDate(d);
+      const entries = placements
+        .filter(p => p.dayKey === dk)
+        .map(p => ({ placement: p, task: memberTasks.find(t => t.id === p.taskId) }))
+        .filter((e): e is { placement: Placement; task: TaskItem } => !!e.task);
+      return [dk, entries];
+    })
   );
 
-  // Flagged tasks (not forced): excluded from buildSchedule — include in unplaced tables
-  const unplacedFlagged = member
+  // Tasks with at least one placement anywhere (across all days, not just visible)
+  const placedTaskIds = new Set(
+    placements
+      .filter(p => memberTasks.some(t => t.id === p.taskId))
+      .map(p => p.taskId)
+  );
+
+  // Unplaced: active tasks without any placement
+  const allUnplaced = member
     ? memberTasks
-        .filter(t => t.flagged && !forcedTasks.has(t.id) && !childMap.has(t.key))
-        .filter(t => { const n = normalizeStatus(t.status); return n !== "done" && n !== "in_review" && !!t.dueDate; })
-        .map(t => ({ task: t, hours: hoursOverrides[t.id] ?? t.estimatedHours }))
+        .filter(t => {
+          if (childMap.has(t.key)) return false;
+          const norm = normalizeStatus(t.status);
+          if (norm === "done" || norm === "in_review") return false;
+          if (t.flagged && !forcedTasks.has(t.id)) return false;
+          if (!t.dueDate) return false;
+          return !placedTaskIds.has(t.id);
+        })
+        .map(t => ({ task: t, hours: t.estimatedHours }))
+        .sort((a, b) => parseLocalDate(a.task.dueDate!).getTime() - parseLocalDate(b.task.dueDate!).getTime())
     : [];
-  const allUnplaced = [...unplacedTasks, ...unplacedFlagged]
-    .sort((a, b) => {
-      const da = a.task.dueDate ? parseLocalDate(a.task.dueDate).getTime() : Infinity;
-      const db = b.task.dueDate ? parseLocalDate(b.task.dueDate).getTime() : Infinity;
-      return da - db;
-    });
+
   const calEndMs  = new Date(calDays[calDays.length - 1]).setHours(23, 59, 59, 0);
-  const fourWksMs = new Date(todayMidnight).setDate(todayMidnight.getDate() + 28);
-  // Table 1: past deadline OR deadline within visible calendar range
+  const fourWksMs = new Date(todayMidnight).getTime() + 28 * 24 * 60 * 60 * 1000;
   const unplacedInRange = allUnplaced.filter(({ task }) => {
     if (!task.dueDate) return false;
     return parseLocalDate(task.dueDate).getTime() <= calEndMs;
   });
-  // Table 2: beyond visible range but within 4 weeks from today
   const unplacedFuture = allUnplaced.filter(({ task }) => {
     if (!task.dueDate) return false;
     const d = parseLocalDate(task.dueDate).getTime();
@@ -979,18 +993,19 @@ export default function AgendaPage() {
 
       {/* Hours edit popover */}
       {editingBlock && (() => {
-        const task = member?.tasks.find(t => t.id === editingBlock.taskId);
-        const hasOverride = hoursOverrides[editingBlock.taskId] !== undefined || dayPins[editingBlock.taskId] !== undefined;
+        const pl = placements.find(p => p.id === editingBlock.placementId);
+        const task = pl ? memberTasks.find(t => t.id === pl.taskId) : null;
+        const isEdited = pl && task ? pl.hours !== task.estimatedHours : false;
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
             onClick={() => setEditingBlock(null)}>
             <div style={{ background: "white", borderRadius: 14, padding: "22px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.16)" }}
               onClick={e => e.stopPropagation()}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#111", marginBottom: 4 }}>Editar duração</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#111", marginBottom: 4 }}>Editar duração neste dia</div>
               <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                 title={task?.title}>{task?.title}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-                <label style={{ fontSize: 12, color: "#374151", flexShrink: 0 }}>Horas estimadas:</label>
+                <label style={{ fontSize: 12, color: "#374151", flexShrink: 0 }}>Horas:</label>
                 <input
                   type="number" min={0.5} max={40} step={0.5}
                   value={editingBlock.hours}
@@ -1006,25 +1021,28 @@ export default function AgendaPage() {
                 <button
                   onClick={() => {
                     const h = Math.max(0.5, editingBlock.hours);
-                    setHoursOverrides(prev => {
-                      const next = { ...prev, [editingBlock.taskId]: h };
-                      try { localStorage.setItem(`agenda_hours_${editingBlock.taskId}`, String(h)); } catch {}
+                    setPlacements(prev => {
+                      const next = prev.map(p => p.id === editingBlock.placementId ? { ...p, hours: h } : p);
+                      try { localStorage.setItem("agenda_placements_v2", JSON.stringify(next)); } catch {}
                       return next;
                     });
                     setEditingBlock(null);
                   }}
                   style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#7c3aed", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Salvar</button>
               </div>
-              {hasOverride && (
+              {isEdited && task && (
                 <button
                   onClick={() => {
-                    const id = editingBlock.taskId;
-                    setHoursOverrides(prev => { const n = {...prev}; delete n[id]; try { localStorage.removeItem(`agenda_hours_${id}`); } catch {} return n; });
-                    setDayPins(prev => { const n = {...prev}; delete n[id]; try { localStorage.removeItem(`agenda_day_${id}`); } catch {} return n; });
+                    const h = task.estimatedHours;
+                    setPlacements(prev => {
+                      const next = prev.map(p => p.id === editingBlock.placementId ? { ...p, hours: h } : p);
+                      try { localStorage.setItem("agenda_placements_v2", JSON.stringify(next)); } catch {}
+                      return next;
+                    });
                     setEditingBlock(null);
                   }}
                   style={{ marginTop: 12, width: "100%", padding: "6px", border: "none", background: "none", fontSize: 11, color: "#9ca3af", cursor: "pointer", textAlign: "center" }}>
-                  ↩ Limpar overrides desta task
+                  ↩ Resetar para estimado ({task.estimatedHours}h)
                 </button>
               )}
             </div>
@@ -1188,17 +1206,11 @@ export default function AgendaPage() {
                 const isHoliday   = holidays.has(dk);
                 const isAbsence   = member ? (absences[member.name]?.has(dk) ?? false) : false;
                 const isDayBlocked = isHoliday || isAbsence;
-                const daySlots = schedule.get(dk) ?? [];
-                const regSlots = daySlots.filter(s => s.pool === "regular");
-                const freelaSlots = daySlots.filter(s => s.pool === "freela");
-                const regUsed  = regSlots.reduce((s, a)  => s + a.hours, 0);
-                const freelaUsed = freelaSlots.reduce((s, a) => s + a.hours, 0);
-                const regFree  = Math.max(0, cap.regular - regUsed);
-                const freelaFree = Math.max(0, cap.freela - freelaUsed);
+                const dayEntries = schedule.get(dk) ?? [];
+                const totalHours = dayEntries.reduce((s, e) => s + e.placement.hours, 0);
                 const isT = sameDay(day, today);
                 const isPast = !isT && day.getTime() < todayMidnight.getTime();
                 const isDropTarget = calDropDay === dk;
-                const overloaded = regFree < 0.1 && (cap.freela === 0 || freelaFree < 0.1);
 
                 return (
                   <div
@@ -1208,11 +1220,11 @@ export default function AgendaPage() {
                     onDrop={e => {
                       e.preventDefault();
                       if (calDragKey && !isDayBlocked && !isPast) {
-                        const key = calDragKey;
-                        setDayPins(prev => { const next = { ...prev, [key]: dk }; try { localStorage.setItem(`agenda_day_${key}`, dk); } catch {} return next; });
-                        // Auto-force if task is flagged — user explicitly dragged it in
-                        const draggedTask = memberTasks.find(t => t.id === key);
-                        if (draggedTask?.flagged) addToForcedSet(key);
+                        const draggedTask = memberTasks.find(t => t.id === calDragKey);
+                        if (draggedTask) {
+                          addPlacement(calDragKey, dk, draggedTask.estimatedHours);
+                          if (draggedTask.flagged) addToForcedSet(calDragKey);
+                        }
                       }
                       setCalDragKey(null); setCalDropDay(null);
                     }}
@@ -1238,9 +1250,9 @@ export default function AgendaPage() {
                           {isDayBlocked ? "✕" : "+"}
                         </button>
                       </div>
-                      {!isDayBlocked && !isPast && (
-                        <span style={{ fontSize: 9, fontWeight: 700, color: overloaded ? "#dc2626" : regFree < 1 ? "#d97706" : "#059669" }}>
-                          {overloaded ? "🔴" : regFree < 1 ? "🟡" : "🟢"} {fmtH(regFree)} livres
+                      {!isDayBlocked && !isPast && totalHours > 0 && (
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "#6b7280" }}>
+                          {fmtH(totalHours)}
                         </span>
                       )}
                     </div>
@@ -1254,34 +1266,32 @@ export default function AgendaPage() {
                           <span style={{ fontSize: 9, color: "#9ca3af" }}>sem alocação</span>
                         </div>
                       ) : (<>
-                      {regSlots.map((slot, i) => {
-                        const blockH = Math.max(36, (slot.hours / cap.regular) * COL_H);
-                        const color  = projectColor(extractProject(slot.task.title));
-                        const isDraggingThis = calDragKey === slot.task.id;
-                        const due    = slot.task.dueDate ? parseLocalDate(slot.task.dueDate) : null;
-                        const overdue = due && due < todayMidnight && slot.task.status !== "done" && slot.task.status !== "in_review";
-                        const chip   = statusChipProps(slot.task.status, !!overdue);
-                        const isPinned  = !!dayPins[slot.task.id];
-                        const isEdited  = hoursOverrides[slot.task.id] !== undefined;
+                      {dayEntries.map(({ placement, task: slotTask }) => {
+                        const blockH = Math.max(60, (placement.hours / cap.regular) * COL_H);
+                        const color  = projectColor(extractProject(slotTask.title));
+                        const isDraggingThis = calDragKey === placement.taskId;
+                        const due    = slotTask.dueDate ? parseLocalDate(slotTask.dueDate) : null;
+                        const overdue = due && due < todayMidnight && slotTask.status !== "done" && slotTask.status !== "in_review";
+                        const chip   = statusChipProps(slotTask.status, !!overdue);
 
                         return (
                           <div
-                            key={slot.task.id + i}
+                            key={placement.id}
                             draggable
-                            onDragStart={e => { e.stopPropagation(); setCalDragKey(slot.task.id); }}
+                            onDragStart={e => { e.stopPropagation(); setCalDragKey(placement.taskId); }}
                             onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }}
-                            onClick={() => setEditingBlock({ taskId: slot.task.id, hours: hoursOverrides[slot.task.id] ?? slot.task.estimatedHours })}
-                            title={slot.task.title}
-                            style={{ height: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "pointer", opacity: isDraggingThis ? 0.4 : 1, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
+                            onClick={() => setEditingBlock({ placementId: placement.id, hours: placement.hours })}
+                            title={slotTask.title}
+                            style={{ minHeight: blockH, marginBottom: 4, borderRadius: 7, background: hexToRgba(color, isDraggingThis ? 0.1 : 0.13), border: `1px solid ${hexToRgba(color, 0.35)}`, borderLeft: `3px solid ${color}`, padding: "4px 6px 4px 7px", cursor: "pointer", opacity: isDraggingThis ? 0.4 : 1, display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "opacity 0.12s", userSelect: "none", flexShrink: 0, position: "relative", boxSizing: "border-box" }}
                           >
-                            <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: blockH > 60 ? 2 : 1, WebkitBoxOrient: "vertical" as const, lineHeight: 1.3, paddingRight: 14 }}>
-                              {slot.continuation && <span style={{ fontSize: 8, fontWeight: 700, color: "#9ca3af", marginRight: 3 }}>↪</span>}<a href={`${JIRA}/${slot.task.key}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{slot.task.title}</a>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: "#374151", lineHeight: 1.3, paddingRight: 14, whiteSpace: "normal", wordBreak: "break-word" }}>
+                              <a href={`${JIRA}/${slotTask.key}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{slotTask.title}</a>
                             </div>
                             {blockH > 56 && (() => {
                               const ACCENT = areaC;
-                              const pillKey = slot.task.id + "|" + dk;
-                              const curUser = assignableUsers.find(u => u.displayName === slot.task.assignee);
-                              const pillLabel = curUser ? curUser.firstName : (slot.task.assignee ? slot.task.assignee.split(/[\s.]/)[0] : "—");
+                              const pillKey = placement.id + "|pill";
+                              const curUser = assignableUsers.find(u => u.displayName === slotTask.assignee);
+                              const pillLabel = curUser ? curUser.firstName : (slotTask.assignee ? slotTask.assignee.split(/[\s.]/)[0] : "—");
                               return (
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 4 }}>
                                   <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: chip.bg, color: chip.color, whiteSpace: "nowrap", overflow: "hidden", maxWidth: "50%" }}>{chip.label}</span>
@@ -1291,21 +1301,21 @@ export default function AgendaPage() {
                                         e.stopPropagation();
                                         if (openPill?.key === pillKey) { setOpenPill(null); return; }
                                         const rect = e.currentTarget.getBoundingClientRect();
-                                        setOpenPill({ key: pillKey, taskKey: slot.task.key, currentAssignee: slot.task.assignee, accent: ACCENT, rect });
+                                        setOpenPill({ key: pillKey, taskKey: slotTask.key, currentAssignee: slotTask.assignee, accent: ACCENT, rect });
                                       }}
                                       style={{ display: "flex", alignItems: "center", gap: 2, padding: "1px 4px 1px 6px", background: "#fff", border: `1px solid ${openPill?.key === pillKey ? ACCENT : "#e5e7eb"}`, borderRadius: 999, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", cursor: "pointer", fontSize: 9, fontWeight: 500, color: curUser ? ACCENT : "#9ca3af", lineHeight: 1.4, transition: "border-color 0.15s", whiteSpace: "nowrap", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>
                                       {pillLabel}<span style={{ fontSize: 7, opacity: 0.6 }}>▾</span>
                                     </button>
                                   </div>
                                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0, gap: 1 }}>
-                                    <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(slot.hours)}{slot.continuation ? <span style={{ fontWeight: 400, color: "#9ca3af" }}> (cont.)</span> : null}</span>
+                                    <span style={{ fontSize: 9, color: hexToRgba(color, 0.85), fontWeight: 700 }}>{fmtH(placement.hours)}</span>
                                     {due && <span style={{ fontSize: 8, color: "#9ca3af" }}>{due.getDate()}/{due.getMonth() + 1}</span>}
                                   </div>
                                 </div>
                               );
                             })()}
                             <button
-                              onClick={e => { e.stopPropagation(); removeFromDay(slot.task.id, dk); }}
+                              onClick={e => { e.stopPropagation(); removePlacement(placement.id); }}
                               title="Remover deste dia"
                               style={{ position: "absolute", top: 2, right: 2, width: 14, height: 14, borderRadius: 3, border: "none", background: hexToRgba(color, 0.25), color: "#374151", fontSize: 8, fontWeight: 700, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, opacity: 0.7, transition: "opacity 0.1s" }}
                               onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
@@ -1314,37 +1324,6 @@ export default function AgendaPage() {
                           </div>
                         );
                       })}
-
-                      {/* Free time block */}
-                      {regFree > 0.1 && (
-                        <div style={{ height: Math.max(22, (regFree / cap.regular) * COL_H - 6), borderRadius: 7, background: "#f9fafb", border: "1.5px dashed #e5e7eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <span style={{ fontSize: 9, color: "#d1d5db", userSelect: "none" }}>{fmtH(regFree)} livre</span>
-                        </div>
-                      )}
-
-                      {/* Freela pool */}
-                      {cap.freela > 0 && (
-                        <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1.5px dashed #fed7aa" }}>
-                          <div style={{ fontSize: 8, color: "#ea580c", fontWeight: 700, marginBottom: 3 }}>🤝 freela</div>
-                          {freelaSlots.map((slot2, j) => {
-                            const blockH2 = Math.max(28, (slot2.hours / cap.freela) * 100);
-                            const color2  = projectColor(extractProject(slot2.task.title));
-                            return (
-                              <div key={j}
-                                title={slot2.task.title}
-                                style={{ height: blockH2, marginBottom: 3, borderRadius: 5, background: hexToRgba(color2, 0.12), borderLeft: `3px solid ${color2}`, padding: "3px 6px", overflow: "hidden", userSelect: "none", boxSizing: "border-box" }}>
-                                <div style={{ fontSize: 9, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><a href={`${JIRA}/${slot2.task.key}`} target="_blank" rel="noopener noreferrer" style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")} onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>{slot2.task.title}</a></div>
-                                <div style={{ fontSize: 8, color: "#6b7280" }}>{fmtH(slot2.hours)}</div>
-                              </div>
-                            );
-                          })}
-                          {freelaFree > 0.1 && (
-                            <div style={{ height: 20, borderRadius: 5, background: "#fef3c7", border: "1px dashed #fcd34d", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <span style={{ fontSize: 8, color: "#d97706" }}>{fmtH(freelaFree)} livre</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
                       </>)}
                     </div>
                   </div>
@@ -1630,7 +1609,9 @@ export default function AgendaPage() {
                             <div key={i} style={{ position: "relative", borderRight, minHeight: 32, background: isT && !inParentRange ? "#f5f3ff" : "transparent" }}>
                               {inParentRange && (
                                 <div onMouseDown={(e) => { if (e.button !== 0 || parentBar.isDone) return; e.preventDefault(); setDragState({ key: parent.id, handle: cellN === dispStart ? "left" : "right", startX: e.clientX, initialCol: cellN === dispStart ? dispStart : dispEnd }); }}
-                                  style={{ position: "absolute", top: 4, bottom: 4, left: 0, right: 0, background: ct.bg, borderRadius: (cellN === dispStart && !parentBar.startsBefore) && cellN === dispEnd ? "4px" : (cellN === dispStart && !parentBar.startsBefore) ? "4px 0 0 4px" : cellN === dispEnd ? "0 4px 4px 0" : "0", opacity: parentBar.isDone ? 0.5 : 1, cursor: parentBar.isDone ? "default" : isBeingDraggedParent ? "grabbing" : "grab" }} />
+                                  style={{ position: "absolute", top: 4, bottom: 4, left: 0, right: 0, background: ct.bg, borderRadius: (cellN === dispStart && !parentBar.startsBefore) && cellN === dispEnd ? "4px" : (cellN === dispStart && !parentBar.startsBefore) ? "4px 0 0 4px" : cellN === dispEnd ? "0 4px 4px 0" : "0", opacity: parentBar.isDone ? 0.5 : 1, cursor: parentBar.isDone ? "default" : isBeingDraggedParent ? "grabbing" : "grab" }}>
+                                  {!parentBar.isDone && <span draggable onMouseDown={e => e.stopPropagation()} onDragStart={e => { e.stopPropagation(); setCalDragKey(parent.id); }} onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }} style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 8, color: "rgba(255,255,255,0.65)", cursor: "grab", userSelect: "none", lineHeight: 1, zIndex: 3, padding: "3px 4px" }}>⠿</span>}
+                                </div>
                               )}
                               {isDeadlineCell && parentBar && (
                                 <span style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: ct.text, whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none", maxWidth: "calc(100% - 6px)", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1720,7 +1701,9 @@ export default function AgendaPage() {
                                 <div key={i} style={{ position: "relative", borderRight: subCellBorder, minHeight: 28, background: (subBar?.overdue && !isWaiting && isSubDueCell) ? "#FEE2E2" : isT && !inSubRange ? "#f5f3ff" : "transparent" }}>
                                   {inSubRange && (
                                     <div onMouseDown={(e) => { if (e.button !== 0 || sub.status === "done") return; e.preventDefault(); setDragState({ key: sub.id, handle: cellN === dispSubStart ? "left" : "right", startX: e.clientX, initialCol: cellN === dispSubStart ? dispSubStart : dispSubEnd }); }}
-                                      style={{ position: "absolute", top: 3, bottom: 3, left: 0, right: 0, background: subBg, borderLeft: cellN === subBar.startCol ? `3px solid ${subBorder}` : undefined, borderRadius: (cellN === dispSubStart && !subBar.startsBefore) && cellN === dispSubEnd ? "3px" : (cellN === dispSubStart && !subBar.startsBefore) ? "3px 0 0 3px" : cellN === dispSubEnd ? "0 3px 3px 0" : "0", opacity: sub.status === "done" ? 0.7 : 1, cursor: sub.status === "done" ? "default" : isBeingDraggedSub ? "grabbing" : "grab" }} />
+                                      style={{ position: "absolute", top: 3, bottom: 3, left: 0, right: 0, background: subBg, borderLeft: cellN === subBar.startCol ? `3px solid ${subBorder}` : undefined, borderRadius: (cellN === dispSubStart && !subBar.startsBefore) && cellN === dispSubEnd ? "3px" : (cellN === dispSubStart && !subBar.startsBefore) ? "3px 0 0 3px" : cellN === dispSubEnd ? "0 3px 3px 0" : "0", opacity: sub.status === "done" ? 0.7 : 1, cursor: sub.status === "done" ? "default" : isBeingDraggedSub ? "grabbing" : "grab" }}>
+                                      {sub.status !== "done" && <span draggable onMouseDown={e => e.stopPropagation()} onDragStart={e => { e.stopPropagation(); setCalDragKey(sub.id); }} onDragEnd={() => { setCalDragKey(null); setCalDropDay(null); }} style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 8, color: "rgba(0,0,0,0.3)", cursor: "grab", userSelect: "none", lineHeight: 1, zIndex: 3, padding: "3px 4px" }}>⠿</span>}
+                                    </div>
                                   )}
                                   {subBar && cellN === subBar.endCol && inSubRange && !isWaiting && (
                                     <span style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: subTextColor, whiteSpace: "nowrap", zIndex: 2, pointerEvents: "none", maxWidth: "calc(100% - 6px)", overflow: "hidden", textOverflow: "ellipsis" }}>
