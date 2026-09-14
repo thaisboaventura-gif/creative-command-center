@@ -219,10 +219,6 @@ function getDailyCap(name: string): { regular: number; freela: number } {
   return map[k] ?? { regular: 6.5, freela: 0 };
 }
 
-interface DaySlot { task: TaskItem; hours: number; pool: "regular" | "freela"; continuation?: boolean }
-
-interface ScheduleResult { slots: Map<string, DaySlot[]>; unplaced: Array<{ task: TaskItem; hours: number }> }
-
 interface Placement {
   id: string;
   taskId: string;
@@ -243,84 +239,6 @@ function normalizeStatus(raw: string): string {
   return "to_do";
 }
 
-function buildSchedule(
-  tasks: TaskItem[],
-  days: Date[],
-  cap: { regular: number; freela: number },
-  hoursOverrides: Record<string, number> = {},
-  dayPins: Record<string, string> = {},
-  dayExclusions: Record<string, string[]> = {},
-  blockedDays: Set<string> = new Set(),
-): ScheduleResult {
-  const load = new Map<string, { r: number; f: number }>(days.map(d => [formatLocalDate(d), { r: 0, f: 0 }]));
-  const slots = new Map<string, DaySlot[]>(days.map(d => [formatLocalDate(d), []]));
-  const unplaced: Array<{ task: TaskItem; hours: number }> = [];
-
-  const active = tasks
-    .filter(t => {
-      const norm = normalizeStatus(t.status);
-      return norm !== "done" && norm !== "in_review" && !t.flagged &&
-        (hoursOverrides[t.id] ?? t.estimatedHours) > 0 && t.dueDate;
-    })
-    .sort((a, b) => {
-      const aN = normalizeStatus(a.status) === "in_progress" ? 0 : 1;
-      const bN = normalizeStatus(b.status) === "in_progress" ? 0 : 1;
-      if (aN !== bN) return aN - bN;
-      return parseLocalDate(a.dueDate!).getTime() - parseLocalDate(b.dueDate!).getTime();
-    });
-
-  for (const task of active) {
-    let rem = hoursOverrides[task.id] ?? task.estimatedHours;
-    const deadline = parseLocalDate(task.dueDate!);
-    const pinKey = dayPins[task.id];
-    const excluded = new Set(dayExclusions[task.id] ?? []);
-    const isInProgress = normalizeStatus(task.status) === "in_progress";
-
-    // Eligible days: no lower-bound cutoff at "today" — the horizon window determines
-    // the range, so tasks on past days stay visible when navigating backward
-    const eligibleDks = pinKey
-      ? days
-          .filter(d => formatLocalDate(d) === pinKey && !excluded.has(formatLocalDate(d)))
-          .map(d => formatLocalDate(d))
-      : days
-          .filter(d => {
-            const dm = new Date(d); dm.setHours(0, 0, 0, 0);
-            const dk = formatLocalDate(d);
-            return dm <= deadline && !excluded.has(dk);
-          })
-          .map(d => formatLocalDate(d));
-
-    // in_progress → earliest first (ASAP); to_do → latest first (near deadline)
-    const orderedDks = (!pinKey && !isInProgress) ? [...eligibleDks].reverse() : eligibleDks;
-
-    let isContinuation = false;
-    for (const dk of orderedDks) {
-      if (rem <= 0.01) break;
-      if (blockedDays.has(dk)) continue;
-      const l = load.get(dk);
-      const s = slots.get(dk);
-      if (!l || !s) continue;
-
-      const rAvail = Math.max(0, cap.regular - l.r);
-      const fAvail = Math.max(0, cap.freela - l.f);
-
-      if (rAvail > 0) {
-        const h = Math.min(rem, rAvail);
-        l.r += h; rem -= h;
-        s.push({ task, hours: h, pool: "regular", continuation: isContinuation || undefined });
-        isContinuation = true;
-      } else if (fAvail > 0) {
-        const h = Math.min(rem, fAvail);
-        l.f += h; rem -= h;
-        s.push({ task, hours: h, pool: "freela", continuation: isContinuation || undefined });
-        isContinuation = true;
-      }
-    }
-
-    if (rem > 0.01) unplaced.push({ task, hours: rem });
-  }
-  return { slots, unplaced };
-}
 
 function fmtH(h: number): string {
   return (h % 1 === 0 ? h.toString() : h.toFixed(1)) + "h";
